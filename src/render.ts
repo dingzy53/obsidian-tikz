@@ -61,20 +61,32 @@ function startCompile(
 	key: string,
 	source: string,
 	settings: TikzSettings,
+	cache: DiagramCache,
 ): Promise<CompileResult> {
 	const existing = inFlight.get(key);
 	if (existing) return existing;
 
-	const promise = compileTikz({
-		source,
-		preamble: normalizePreamble(settings.defaultPreamble),
-		engine: settings.engine,
-		enginePath: settings.enginePath,
-		dvisvgmPath: settings.dvisvgmPath,
-		extraPathDirs: settings.extraPathDirs,
-		allowShellEscape: settings.allowShellEscape,
-		timeoutMs: settings.compileTimeoutSeconds * 1000,
-	}).finally(() => {
+	const promise = (async (): Promise<CompileResult> => {
+		const result = await compileTikz({
+			source,
+			preamble: normalizePreamble(settings.defaultPreamble),
+			engine: settings.engine,
+			enginePath: settings.enginePath,
+			dvisvgmPath: settings.dvisvgmPath,
+			extraPathDirs: settings.extraPathDirs,
+			allowShellEscape: settings.allowShellEscape,
+			timeoutMs: settings.compileTimeoutSeconds * 1000,
+		});
+		// Persisted here rather than in the component: a block that scrolls
+		// away or is re-rendered mid-compile must not throw away a finished
+		// (and expensive) compile.
+		if (result.ok) {
+			await cache.set(key, result.svg).catch((error: unknown) => {
+				console.warn("[tikz] Could not write the diagram cache.", error);
+			});
+		}
+		return result;
+	})().finally(() => {
 		inFlight.delete(key);
 	});
 
@@ -164,13 +176,11 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			return;
 		}
 
-		const result = await startCompile(this.cacheKey, this.source, settings);
+		const result = await startCompile(this.cacheKey, this.source, settings, this.deps.cache);
 		if (this.unloaded) return;
 		this.stopLoadingTimer();
 
 		if (result.ok) {
-			await this.deps.cache.set(this.cacheKey, result.svg);
-			if (this.unloaded) return;
 			this.rawSvg = result.svg;
 			this.inject(result.svg);
 			return;
