@@ -29,6 +29,16 @@ describe("detectTier", () => {
 		expect(detectTier("\\begin{document}\n\\begin{tikzpicture}\\end{tikzpicture}\n\\end{document}")).toBe(2);
 	});
 
+	it("ignores a commented-out \\documentclass or \\begin{document}", () => {
+		expect(detectTier("% \\documentclass{article}\n\\draw (0,0)--(1,1);")).toBe(3);
+		expect(detectTier("\\draw (0,0)--(1,1); % \\begin{document}")).toBe(3);
+		expect(detectTier("% \\documentclass{article}\n\\begin{document}\\end{document}")).toBe(2);
+	});
+
+	it("still treats an escaped percent as ordinary text", () => {
+		expect(detectTier("\\node{50\\%}; \\documentclass{x}")).toBe(1);
+	});
+
 	it("tier 3: bare TikZ", () => {
 		expect(detectTier("\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}")).toBe(3);
 	});

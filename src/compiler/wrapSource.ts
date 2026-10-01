@@ -42,6 +42,8 @@ export const DEFAULT_PREAMBLE = [
 
 export type SourceTier = 1 | 2 | 3;
 
+const BEGIN_DOCUMENT = /\\begin\s*\{\s*document\s*\}/;
+
 export interface WrapOptions {
 	/** Raw code-block content. */
 	source: string;
@@ -112,9 +114,22 @@ export function normalizePreamble(preamble: string): string {
  * 3. Bare TikZ/LaTeX → wrap fully.
  */
 export function detectTier(tidiedSource: string): SourceTier {
-	if (/\\documentclass\b/.test(tidiedSource)) return 1;
-	if (/\\begin\s*\{\s*document\s*\}/.test(tidiedSource)) return 2;
+	const code = maskComments(tidiedSource);
+	if (/\\documentclass\b/.test(code)) return 1;
+	if (BEGIN_DOCUMENT.test(code)) return 2;
 	return 3;
+}
+
+/**
+ * Blanks out `%` comments with spaces, keeping every index valid. Without
+ * this, a commented-out `% \documentclass{article}` flips a bare snippet into
+ * tier 1 and it is compiled verbatim, without the preamble it needs. An escaped
+ * `\%` is not a comment.
+ */
+function maskComments(source: string): string {
+	return source.replace(/(^|[^\\])%.*$/gm, (match: string, lead: string) =>
+		lead + " ".repeat(match.length - lead.length),
+	);
 }
 
 const PACKAGE_LOADERS = /^\\(usepackage|RequirePackage)\b/;
@@ -143,8 +158,6 @@ function splitPreambleLines(lines: string[]): { early: string[]; late: string[];
 	return { early, late, rest };
 }
 
-const BEGIN_DOCUMENT = /\\begin\s*\{\s*document\s*\}/;
-
 export function wrapTikzSource(options: WrapOptions): WrappedSource {
 	const tidiedSource = tidyTikzSource(options.source);
 	const preamble = normalizePreamble(options.preamble);
@@ -164,7 +177,7 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 
 	if (tier === 2) {
 		// Only the part of the block *before* `\begin{document}` is preamble.
-		const match = BEGIN_DOCUMENT.exec(tidiedSource);
+		const match = BEGIN_DOCUMENT.exec(maskComments(tidiedSource));
 		const index = match?.index ?? 0;
 		const head = tidiedSource.slice(0, index);
 		const document = tidiedSource.slice(index);
