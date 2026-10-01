@@ -355,6 +355,42 @@ export function describeResolution(
 	}
 }
 
+/**
+ * argv for running `command` on the host through `flatpak-spawn --host`.
+ *
+ * Extra directories are prepended to the *host's* `PATH` by a tiny constant
+ * `sh` wrapper that reads them as positional parameters (never interpolated
+ * into the script). Passing `--env=PATH=…` instead would replace the host
+ * `PATH` with the sandbox's, hiding the very TeX install we came for.
+ */
+export function buildHostSpawn(
+	command: string,
+	args: string[],
+	cwd: string,
+	extraDirs: string[] = [],
+): { command: string; args: string[] } {
+	const dirs = [
+		...extraDirs.map((dir) => dir.trim()).filter((dir) => dir.length > 0),
+		...knownBinDirs("linux"),
+	];
+	return {
+		command: "/usr/bin/flatpak-spawn",
+		args: [
+			"--host",
+			"--watch-bus",
+			`--directory=${cwd}`,
+			"--",
+			"sh",
+			"-c",
+			'PATH="$1:$PATH"; shift; exec "$@"',
+			"_",
+			[...new Set(dirs)].join(":"),
+			command,
+			...args,
+		],
+	};
+}
+
 /** Root of the per-compile scratch directories (never inside the vault). */
 export function scratchRoot(): string {
 	if (isFlatpak()) {

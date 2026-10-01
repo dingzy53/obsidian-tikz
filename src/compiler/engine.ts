@@ -18,6 +18,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
 	BinaryNotFoundError,
+	buildHostSpawn,
 	buildSpawnEnv,
 	isFlatpak,
 	resolveBinary,
@@ -206,20 +207,11 @@ function runProcess(
 		let settled = false;
 		let timedOut = false;
 
-		const spawnCmd = options.viaHost ? "/usr/bin/flatpak-spawn" : command;
-		const spawnArgs = options.viaHost
-			? [
-					"--host",
-					"--watch-bus",
-					`--directory=${options.cwd}`,
-					...(options.extraDirs && options.extraDirs.length > 0
-						? [`--env=PATH=${options.extraDirs.join(":")}:${process.env.PATH ?? ""}`]
-						: []),
-					"--",
-					command,
-					...args,
-			  ]
-			: args;
+		const host = options.viaHost
+			? buildHostSpawn(command, args, options.cwd, options.extraDirs)
+			: null;
+		const spawnCmd = host ? host.command : command;
+		const spawnArgs = host ? host.args : args;
 
 		let child: ReturnType<typeof spawn>;
 		try {
