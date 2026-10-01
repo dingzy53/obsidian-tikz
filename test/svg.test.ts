@@ -215,6 +215,26 @@ describe("prefixSvgIds", () => {
 		expect(out).toContain(`href='#p-g0-12'`);
 	});
 
+	it("handles quoted url() references and whitespace around =", () => {
+		const out = prefixSvgIds(`<g id = 'a'/><rect fill="url('#a')"/><use href = "#a"/>`, "p-");
+		expect(out).toBe(`<g id = 'p-a'/><rect fill="url('#p-a')"/><use href = "#p-a"/>`);
+	});
+
+	it("leaves references to ids that are not defined here untouched", () => {
+		const out = prefixSvgIds(`<g id='a'/><use href='#elsewhere'/><rect fill='url(#other)'/>`, "p-");
+		expect(out).toBe(`<g id='p-a'/><use href='#elsewhere'/><rect fill='url(#other)'/>`);
+	});
+
+	it("stays fast with thousands of ids", () => {
+		const defs = Array.from({ length: 5000 }, (_, i) => `<path id='g0-${i}' d='M0 0'/>`).join("");
+		const uses = Array.from({ length: 5000 }, (_, i) => `<use href='#g0-${i}'/>`).join("");
+		const started = performance.now();
+		const out = prefixSvgIds(`<svg>${defs}${uses}</svg>`, "p-");
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(out).toContain("<use href='#p-g0-4999'/>");
+		expect(out).toContain("id='p-g0-4999'");
+	});
+
 	it("is a no-op when there are no ids", () => {
 		expect(prefixSvgIds(`<svg><path d='M0 0'/></svg>`, "p-")).toBe(`<svg><path d='M0 0'/></svg>`);
 	});

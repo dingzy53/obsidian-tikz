@@ -311,17 +311,35 @@ export function prefixSvgIds(svg: string, prefix: string): string {
 	}
 	if (ids.size === 0) return svg;
 
-	let out = svg;
-	for (const id of ids) {
-		const prefixed = `${prefix}${id}`;
-		out = out
-			.replaceAll(`id='${id}'`, `id='${prefixed}'`)
-			.replaceAll(`id="${id}"`, `id="${prefixed}"`)
-			.replaceAll(`href='#${id}'`, `href='#${prefixed}'`)
-			.replaceAll(`href="#${id}"`, `href="#${prefixed}"`)
-			.replaceAll(`url(#${id})`, `url(#${prefixed})`);
-	}
-	return out;
+	// One pass over the document instead of one per id: pgfplots output can
+	// define thousands of glyph ids, and a replace-per-id is quadratic.
+	const reference =
+		/(\bid\s*=\s*)(['"])([^'"]+)\2|(\bhref\s*=\s*)(['"])#([^'"]+)\5|url\(\s*(['"]?)#([^'")\s]+)\7\s*\)/g;
+	return svg.replace(
+		reference,
+		(
+			whole: string,
+			idAttr: string | undefined,
+			idQuote: string | undefined,
+			idValue: string | undefined,
+			hrefAttr: string | undefined,
+			hrefQuote: string | undefined,
+			hrefValue: string | undefined,
+			urlQuote: string | undefined,
+			urlValue: string | undefined,
+		) => {
+			if (idAttr !== undefined && idValue !== undefined && ids.has(idValue)) {
+				return `${idAttr}${idQuote}${prefix}${idValue}${idQuote}`;
+			}
+			if (hrefAttr !== undefined && hrefValue !== undefined && ids.has(hrefValue)) {
+				return `${hrefAttr}${hrefQuote}#${prefix}${hrefValue}${hrefQuote}`;
+			}
+			if (urlValue !== undefined && ids.has(urlValue)) {
+				return `url(${urlQuote}#${prefix}${urlValue}${urlQuote})`;
+			}
+			return whole;
+		},
+	);
 }
 
 /** Elements dvisvgm / PGF can legitimately produce. Everything else is dropped. */
