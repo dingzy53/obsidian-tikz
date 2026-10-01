@@ -260,6 +260,31 @@ describe.skipIf(!RUN)("engine matrix", () => {
 		expect(pathCount(svg)).toBeGreaterThan(0);
 	}, TEST_TIMEOUT);
 
+	it("accepts package options for a package the default preamble also loads", async () => {
+		// The default preamble loads circuitikz without options. Loading it
+		// again *with* options afterwards is an "Option clash"; the block's own
+		// packages therefore have to come first.
+		const svg = expectRendered(
+			await compile(
+				block(`\\usepackage[american]{circuitikz}
+\\begin{circuitikz}
+\\draw (0,0) to[R] (2,0);
+\\end{circuitikz}`),
+			),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
+	it("treats a commented-out \\documentclass as a comment", async () => {
+		const svg = expectRendered(
+			await compile(
+				block(`% \\documentclass{article}
+\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}`),
+			),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
 	it("LuaLaTeX supports system fonts via fontspec, which plain LaTeX cannot", async () => {
 		// `\usepackage` in a bare block is hoisted into the preamble, so this
 		// also exercises that path end to end.
