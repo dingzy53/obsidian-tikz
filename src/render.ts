@@ -106,7 +106,9 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	}
 
 	onload(): void {
-		void this.render();
+		// `render()` handles its own failures; this catch is the last line of
+		// defence so a bug can never leave the loading spinner running.
+		this.render().catch((error: unknown) => this.failUnexpectedly(error));
 	}
 
 	onunload(): void {
@@ -210,7 +212,14 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		this.container.appendChild(element);
 	}
 
-	/** The diagram compiled, but its SVG was rejected before display. */
+	private failUnexpectedly(error: unknown): void {
+		console.error("[tikz] Rendering failed unexpectedly.", error);
+		this.stopLoadingTimer();
+		if (this.unloaded) return;
+		this.showDisplayError(error);
+	}
+
+	/** The diagram could not be shown (rejected SVG, I/O failure, internal error). */
 	private showDisplayError(error: unknown): void {
 		this.container.empty();
 		this.container.classList.remove("tikz-light-canvas");

@@ -221,14 +221,29 @@ function runProcess(
 			  ]
 			: args;
 
-		const child = spawn(spawnCmd, spawnArgs, {
-			cwd: options.cwd,
-			env: options.env,
-			stdio: ["ignore", "pipe", "pipe"],
-			// Own process group, so a timeout can kill helper processes too.
-			detached: process.platform !== "win32",
-			windowsHide: true,
-		});
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(spawnCmd, spawnArgs, {
+				cwd: options.cwd,
+				env: options.env,
+				stdio: ["ignore", "pipe", "pipe"],
+				// Own process group, so a timeout can kill helper processes too.
+				detached: process.platform !== "win32",
+				windowsHide: true,
+			});
+		} catch (error) {
+			// `spawn` can throw synchronously (e.g. EINVAL for a .bat/.cmd on
+			// Windows) instead of emitting `error`.
+			resolve({
+				code: null,
+				signal: null,
+				stdout: "",
+				stderr: "",
+				timedOut: false,
+				spawnError: error instanceof Error ? error : new Error(String(error)),
+			});
+			return;
+		}
 
 		const append = (current: string, chunk: Buffer): string => {
 			if (current.length >= MAX_CAPTURE_BYTES) return current;
@@ -391,6 +406,26 @@ export async function sweepScratchDirs(maxAgeMs = 60 * 60 * 1000): Promise<numbe
  */
 export async function compileTikz(options: CompileOptions): Promise<CompileResult> {
 	const started = Date.now();
+	try {
+		return await compileTikzUnsafe(options, started);
+	} catch (error) {
+		// Backstop for the "never throws" contract: an unexpected exception
+		// (a bug, an fs error outside the guarded calls) must still surface as
+		// a failure with a message instead of an unhandled rejection.
+		const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+		return {
+			ok: false,
+			kind: "internal",
+			summary: `Unexpected error while compiling: ${error instanceof Error ? error.message : String(error)}`,
+			log: message,
+			tex: "",
+			durationMs: Date.now() - started,
+			workDir: options.workDir ?? "",
+		};
+	}
+}
+
+async function compileTikzUnsafe(options: CompileOptions, started: number): Promise<CompileResult> {
 	const spec = ENGINE_SPECS[options.engine];
 	const jobName = options.jobName ?? "diagram";
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
