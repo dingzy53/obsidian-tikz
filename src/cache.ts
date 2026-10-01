@@ -111,7 +111,7 @@ export class DiagramCache {
 	}
 
 	/**
-	 * Removes `<key>.log` files. Versions before 1.2 wrote one per failed
+	 * Removes `<key>.log` files. Earlier versions wrote one per failed
 	 * compile, nothing ever read them, and nothing swept them, so they only
 	 * accumulated.
 	 */
