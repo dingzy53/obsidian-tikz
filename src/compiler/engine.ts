@@ -16,6 +16,9 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+// Imported explicitly: this module is plain Node (no `window`), and the explicit
+// binding keeps it clear that these are Node timers, not browser ones.
+import { clearTimeout, setTimeout } from "node:timers";
 import {
 	BinaryNotFoundError,
 	buildHostSpawn,

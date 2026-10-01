@@ -39,7 +39,7 @@ export class Limiter {
 				} catch (error) {
 					// Without this, a synchronous throw would leak the slot (and,
 					// when started from another task's cleanup, escape unhandled).
-					pending = Promise.reject(error);
+					pending = Promise.reject(error instanceof Error ? error : new Error(String(error)));
 				}
 				pending.then(resolve, reject).finally(() => {
 					this.active--;

@@ -3,7 +3,9 @@ import { DEFAULT_ENGINE, DEFAULT_TIMEOUT_SECONDS } from "../src/compiler";
 import {
 	DEFAULT_SETTINGS,
 	MAX_TIMEOUT_SECONDS,
+	applySettingChange,
 	mergeSettings,
+	readSettingValue,
 	sanitizeMaxCacheEntries,
 	sanitizeMaxConcurrentCompiles,
 	sanitizeTimeoutSeconds,
@@ -72,5 +74,36 @@ describe("sanitizers", () => {
 	it("round to whole numbers in range", () => {
 		expect(sanitizeTimeoutSeconds(2.6)).toBe(3);
 		expect(sanitizeMaxCacheEntries(0)).toBe(0);
+	});
+});
+
+describe("readSettingValue / applySettingChange", () => {
+	it("shows extra PATH directories one per line and stores them as a list", () => {
+		const settings = applySettingChange(DEFAULT_SETTINGS, "extraPathDirs", "/a\n  /b  \n\n");
+		expect(settings.extraPathDirs).toEqual(["/a", "/b"]);
+		expect(readSettingValue(settings, "extraPathDirs")).toBe("/a\n/b");
+	});
+
+	it("trims binary paths", () => {
+		expect(applySettingChange(DEFAULT_SETTINGS, "enginePath", "  /usr/bin/latex ").enginePath).toBe(
+			"/usr/bin/latex",
+		);
+	});
+
+	it("validates UI values exactly like stored ones", () => {
+		expect(applySettingChange(DEFAULT_SETTINGS, "compileTimeoutSeconds", 0).compileTimeoutSeconds).toBe(1);
+		expect(applySettingChange(DEFAULT_SETTINGS, "engine", "nonsense").engine).toBe(DEFAULT_ENGINE);
+		expect(applySettingChange(DEFAULT_SETTINGS, "allowShellEscape", "true").allowShellEscape).toBe(false);
+	});
+
+	it("does not mutate its input", () => {
+		const before = { ...DEFAULT_SETTINGS };
+		applySettingChange(DEFAULT_SETTINGS, "maxCacheEntries", 7);
+		expect(DEFAULT_SETTINGS).toEqual(before);
+	});
+
+	it("ignores keys that are not settings", () => {
+		expect(applySettingChange(DEFAULT_SETTINGS, "__proto__", { polluted: true })).toBe(DEFAULT_SETTINGS);
+		expect(readSettingValue(DEFAULT_SETTINGS, "toString")).toBeUndefined();
 	});
 });

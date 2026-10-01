@@ -105,7 +105,7 @@ export default class TikzPlugin extends Plugin {
 			// `electron` only exists in the desktop host, so require it lazily
 			// and defensively: a top-level import would turn any resolution
 			// failure into a plugin that refuses to load at all.
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			// eslint-disable-next-line @typescript-eslint/no-require-imports -- `electron` resolves only inside Obsidian's desktop host, so it cannot be a static import
 			const electron = require("electron") as { shell?: { openPath(path: string): Promise<string> } };
 			void electron.shell?.openPath(target);
 		} catch (error) {

@@ -57,7 +57,7 @@ are reused; the entire rendering backend is new.
 
 ```
 src/main.ts              Plugin entry: onload/onunload, wires everything up
-src/settings.ts          PluginSettingTab (Obsidian UI)
+src/settings.ts          PluginSettingTab on the declarative settings API (1.13+)
 src/settingsModel.ts     Settings schema, defaults, mergeSettings/validation
                          (pure, no obsidian import)
 src/limiter.ts           Bounded-concurrency queue for compiles (pure)
