@@ -117,26 +117,33 @@ export function detectTier(tidiedSource: string): SourceTier {
 	return 3;
 }
 
+const PACKAGE_LOADERS = /^\\(usepackage|RequirePackage)\b/;
+const PREAMBLE_ONLY = /^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotslibrary)\b/;
+
 /**
- * In tier 3 the block has no `\begin{document}`, so anything the user writes
- * is placed *inside* the document body. `\usepackage` is preamble-only and
- * would abort the compile with a confusing "Can be used only in preamble"
- * error, so hoist those lines into the preamble where the user clearly meant
- * them to be. `\usetikzlibrary` is legal in the body but hoisting it too keeps
- * the generated document readable.
+ * Splits the block's own preamble-level lines into those that must come
+ * *before* the default preamble and those that must come after it.
+ *
+ * The order matters. `\usepackage[dvipsnames]{xcolor}` has to be seen before
+ * the default `\usepackage{tikz}` (which loads xcolor without options), or
+ * LaTeX aborts with "Option clash for package xcolor" — and dvipsnames is
+ * extremely common in TikZ snippets. Conversely `\usetikzlibrary` and
+ * `\usepgfplotslibrary` need tikz/pgfplots to be loaded already, so they have
+ * to follow the default preamble.
  */
-function hoistPreambleOnlyLines(lines: string[]): { hoisted: string[]; body: string[] } {
-	const hoisted: string[] = [];
-	const body: string[] = [];
+function splitPreambleLines(lines: string[]): { early: string[]; late: string[]; rest: string[] } {
+	const early: string[] = [];
+	const late: string[] = [];
+	const rest: string[] = [];
 	for (const line of lines) {
-		if (/^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotslibrary)\b/.test(line)) {
-			hoisted.push(line);
-		} else {
-			body.push(line);
-		}
+		if (PACKAGE_LOADERS.test(line)) early.push(line);
+		else if (PREAMBLE_ONLY.test(line)) late.push(line);
+		else rest.push(line);
 	}
-	return { hoisted, body };
+	return { early, late, rest };
 }
+
+const BEGIN_DOCUMENT = /\\begin\s*\{\s*document\s*\}/;
 
 export function wrapTikzSource(options: WrapOptions): WrappedSource {
 	const tidiedSource = tidyTikzSource(options.source);
@@ -153,24 +160,40 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		return { tex, tier, tidiedSource, hoisted: [] };
 	}
 
-	const preambleParts = [driverLine, preamble].filter((part) => part.length > 0);
+	const withContent = (parts: string[]): string => parts.filter((part) => part.length > 0).join("\n");
 
 	if (tier === 2) {
-		const tex = [STANDALONE_CLASS, ...preambleParts, tidiedSource]
-			.filter((part) => part.length > 0)
-			.join("\n");
+		// Only the part of the block *before* `\begin{document}` is preamble.
+		const match = BEGIN_DOCUMENT.exec(tidiedSource);
+		const index = match?.index ?? 0;
+		const head = tidiedSource.slice(0, index);
+		const document = tidiedSource.slice(index);
+		const { early, late, rest } = splitPreambleLines(head.split("\n"));
+		const tex = withContent([
+			STANDALONE_CLASS,
+			driverLine,
+			...early,
+			preamble,
+			...late,
+			...rest,
+			document,
+		]);
 		return { tex, tier, tidiedSource, hoisted: [] };
 	}
 
-	const { hoisted, body } = hoistPreambleOnlyLines(tidiedSource.split("\n"));
-	const tex = [
+	// Tier 3: `\usepackage` and friends are preamble-only, so lift them out of
+	// what will become the document body.
+	const { early, late, rest } = splitPreambleLines(tidiedSource.split("\n"));
+	const tex = withContent([
 		STANDALONE_CLASS,
-		...preambleParts,
-		...hoisted,
+		driverLine,
+		...early,
+		preamble,
+		...late,
 		"\\begin{document}",
-		body.join("\n"),
+		rest.join("\n"),
 		"\\end{document}",
-	].join("\n");
+	]);
 
-	return { tex, tier, tidiedSource, hoisted };
+	return { tex, tier, tidiedSource, hoisted: [...early, ...late] };
 }
