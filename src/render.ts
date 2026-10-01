@@ -6,6 +6,7 @@
  * `settings.ts`.
  */
 
+import * as os from "node:os";
 import { MarkdownRenderChild, Notice } from "obsidian";
 import type { MarkdownPostProcessorContext, Plugin } from "obsidian";
 import { computeCacheKey, DiagramCache } from "./cache";
@@ -16,6 +17,7 @@ import {
 	type CompileFailure,
 	type CompileResult,
 } from "./compiler";
+import { Limiter, resolveConcurrency } from "./limiter";
 import type { TikzSettings } from "./settings";
 import { prepareSvgForDisplay } from "./svg";
 
@@ -57,6 +59,12 @@ export interface TikzRenderer {
  */
 const inFlight = new Map<string, Promise<CompileResult>>();
 
+/**
+ * Bounds how many TeX processes run at once. The compile timeout only starts
+ * when a task gets its slot, so time spent queued never counts against it.
+ */
+const compileLimiter = new Limiter(1);
+
 function startCompile(
 	key: string,
 	source: string,
@@ -66,17 +74,21 @@ function startCompile(
 	const existing = inFlight.get(key);
 	if (existing) return existing;
 
+	compileLimiter.setMax(resolveConcurrency(settings.maxConcurrentCompiles, os.cpus().length));
+
 	const promise = (async (): Promise<CompileResult> => {
-		const result = await compileTikz({
-			source,
-			preamble: normalizePreamble(settings.defaultPreamble),
-			engine: settings.engine,
-			enginePath: settings.enginePath,
-			dvisvgmPath: settings.dvisvgmPath,
-			extraPathDirs: settings.extraPathDirs,
-			allowShellEscape: settings.allowShellEscape,
-			timeoutMs: settings.compileTimeoutSeconds * 1000,
-		});
+		const result = await compileLimiter.run(() =>
+			compileTikz({
+				source,
+				preamble: normalizePreamble(settings.defaultPreamble),
+				engine: settings.engine,
+				enginePath: settings.enginePath,
+				dvisvgmPath: settings.dvisvgmPath,
+				extraPathDirs: settings.extraPathDirs,
+				allowShellEscape: settings.allowShellEscape,
+				timeoutMs: settings.compileTimeoutSeconds * 1000,
+			}),
+		);
 		// Persisted here rather than in the component: a block that scrolls
 		// away or is re-rendered mid-compile must not throw away a finished
 		// (and expensive) compile.

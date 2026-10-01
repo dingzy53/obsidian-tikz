@@ -5,6 +5,7 @@ import {
 	MAX_TIMEOUT_SECONDS,
 	mergeSettings,
 	sanitizeMaxCacheEntries,
+	sanitizeMaxConcurrentCompiles,
 	sanitizeTimeoutSeconds,
 } from "../src/settingsModel";
 
@@ -54,6 +55,13 @@ describe("mergeSettings", () => {
 });
 
 describe("sanitizers", () => {
+	it("keeps parallel compiles within 0..16", () => {
+		expect(sanitizeMaxConcurrentCompiles(-1)).toBe(0);
+		expect(sanitizeMaxConcurrentCompiles("many")).toBe(0);
+		expect(sanitizeMaxConcurrentCompiles(99)).toBe(16);
+		expect(sanitizeMaxConcurrentCompiles(3.7)).toBe(3);
+	});
+
 	it("round to whole numbers in range", () => {
 		expect(sanitizeTimeoutSeconds(2.6)).toBe(3);
 		expect(sanitizeMaxCacheEntries(0)).toBe(0);

@@ -28,6 +28,8 @@ export interface TikzSettings {
 	 */
 	allowShellEscape: boolean;
 	compileTimeoutSeconds: number;
+	/** Diagrams compiled in parallel. 0 = automatic (see `resolveConcurrency`). */
+	maxConcurrentCompiles: number;
 	/**
 	 * How diagram colours are made to work on a dark theme. Replaces upstream's
 	 * `invertColorsInDarkMode` boolean, which could only ever handle exact
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	defaultPreamble: DEFAULT_PREAMBLE,
 	allowShellEscape: false,
 	compileTimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
+	maxConcurrentCompiles: 0,
 	colorAdaptation: "adaptive",
 	maxCacheEntries: 500,
 };
@@ -62,6 +65,14 @@ export const MAX_TIMEOUT_SECONDS = 3600;
 export function sanitizeTimeoutSeconds(value: unknown): number {
 	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_TIMEOUT_SECONDS;
 	return Math.min(MAX_TIMEOUT_SECONDS, Math.max(1, Math.round(value)));
+}
+
+export const MAX_CONCURRENT_COMPILES_LIMIT = 16;
+
+/** 0 = automatic, otherwise a whole number of parallel compiles. */
+export function sanitizeMaxConcurrentCompiles(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+	return Math.min(MAX_CONCURRENT_COMPILES_LIMIT, Math.max(0, Math.floor(value)));
 }
 
 /** A non-negative whole number; 0 means unlimited. */
@@ -84,6 +95,7 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	if (typeof merged.defaultPreamble !== "string") merged.defaultPreamble = DEFAULT_PREAMBLE;
 	merged.compileTimeoutSeconds = sanitizeTimeoutSeconds(merged.compileTimeoutSeconds);
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
+	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
 	merged.allowShellEscape = merged.allowShellEscape === true;
 	merged.enginePath = typeof merged.enginePath === "string" ? merged.enginePath : "";
 	merged.dvisvgmPath = typeof merged.dvisvgmPath === "string" ? merged.dvisvgmPath : "";

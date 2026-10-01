@@ -12,7 +12,11 @@ import {
 	type EngineId,
 } from "./compiler";
 import type { ColorAdaptation } from "./svg";
-import { sanitizeTimeoutSeconds } from "./settingsModel";
+import {
+	MAX_CONCURRENT_COMPILES_LIMIT,
+	sanitizeMaxConcurrentCompiles,
+	sanitizeTimeoutSeconds,
+} from "./settingsModel";
 
 export { DEFAULT_SETTINGS, mergeSettings, type TikzSettings } from "./settingsModel";
 
@@ -277,6 +281,24 @@ export class TikzSettingTab extends PluginSettingTab {
 						const parsed = Number.parseInt(value, 10);
 						if (Number.isFinite(parsed) && parsed > 0) {
 							this.plugin.settings.compileTimeoutSeconds = sanitizeTimeoutSeconds(parsed);
+							await this.persist();
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Parallel compiles")
+			.setDesc(
+				`How many diagrams may compile at once; the rest wait in a queue. 0 picks automatically (half your CPU cores, at most 4). Maximum ${MAX_CONCURRENT_COMPILES_LIMIT}.`,
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("0")
+					.setValue(String(this.plugin.settings.maxConcurrentCompiles))
+					.onChange(async (value) => {
+						const parsed = Number.parseInt(value, 10);
+						if (Number.isFinite(parsed) && parsed >= 0) {
+							this.plugin.settings.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(parsed);
 							await this.persist();
 						}
 					}),
