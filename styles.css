@@ -105,7 +105,8 @@
 	color: var(--text-normal);
 }
 
-.tikz-preamble-input {
+/* The preamble is code: use the full width and a monospace face. */
+.tikz-preamble-group textarea {
 	width: 100%;
 	font-family: var(--font-monospace);
 	font-size: var(--font-smaller);

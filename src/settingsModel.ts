@@ -124,3 +124,37 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 
 	return merged;
 }
+
+/** Keys of {@link TikzSettings}, for deciding whether a control key is ours. */
+const SETTING_KEYS = new Set<string>(Object.keys(DEFAULT_SETTINGS));
+
+/**
+ * Value shown by the settings tab's control for `key`. `extraPathDirs` is a
+ * list in storage but a one-directory-per-line textarea in the UI.
+ */
+export function readSettingValue(settings: TikzSettings, key: string): unknown {
+	if (!SETTING_KEYS.has(key)) return undefined;
+	if (key === "extraPathDirs") return settings.extraPathDirs.join("\n");
+	return settings[key as keyof TikzSettings];
+}
+
+/**
+ * Returns the settings with one control's value applied. Everything goes back
+ * through {@link mergeSettings}, so a value from the UI gets exactly the same
+ * validation and clamping as one loaded from `data.json`. Unknown keys are
+ * ignored.
+ */
+export function applySettingChange(settings: TikzSettings, key: string, value: unknown): TikzSettings {
+	if (!SETTING_KEYS.has(key)) return settings;
+
+	let next = value;
+	if (key === "extraPathDirs" && typeof value === "string") {
+		next = value
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+	} else if ((key === "enginePath" || key === "dvisvgmPath") && typeof value === "string") {
+		next = value.trim();
+	}
+	return mergeSettings({ ...settings, [key]: next });
+}
