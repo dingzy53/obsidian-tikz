@@ -2,7 +2,6 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type TikzPlugin from "./main";
 import type { DiagramCache } from "./cache";
 import {
-	DEFAULT_ENGINE,
 	DEFAULT_PREAMBLE,
 	DEFAULT_TIMEOUT_SECONDS,
 	ENGINE_IDS,
@@ -13,82 +12,9 @@ import {
 	type EngineId,
 } from "./compiler";
 import type { ColorAdaptation } from "./svg";
+import { sanitizeTimeoutSeconds } from "./settingsModel";
 
-export interface TikzSettings {
-	engine: EngineId;
-	/** Override for the TeX engine; empty = auto-detect (plan §6.4). */
-	enginePath: string;
-	/** Override for dvisvgm; empty = auto-detect. */
-	dvisvgmPath: string;
-	/** Extra directories appended to the child `PATH` (the macOS GUI fix). */
-	extraPathDirs: string[];
-	/** Multi-line `\usepackage{...}` block used for blocks that need wrapping. */
-	defaultPreamble: string;
-	/**
-	 * `-shell-escape` opt-in. Off by default, always (AGENTS.md rule 3): with
-	 * it on, opening a note can run arbitrary shell commands.
-	 */
-	allowShellEscape: boolean;
-	compileTimeoutSeconds: number;
-	/**
-	 * How diagram colours are made to work on a dark theme. Replaces upstream's
-	 * `invertColorsInDarkMode` boolean, which could only ever handle exact
-	 * black and white (plan §16.13).
-	 */
-	colorAdaptation: ColorAdaptation;
-	/** 0 = unlimited. */
-	maxCacheEntries: number;
-}
-
-export const DEFAULT_SETTINGS: TikzSettings = {
-	engine: DEFAULT_ENGINE,
-	enginePath: "",
-	dvisvgmPath: "",
-	extraPathDirs: [],
-	defaultPreamble: DEFAULT_PREAMBLE,
-	allowShellEscape: false,
-	compileTimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
-	colorAdaptation: "adaptive",
-	maxCacheEntries: 500,
-};
-
-const ADAPTATION_MODES: ColorAdaptation[] = ["adaptive", "light-canvas", "off"];
-
-/** Normalises whatever is in `data.json` into a complete settings object. */
-export function mergeSettings(loaded: unknown): TikzSettings {
-	const raw = (loaded ?? {}) as Partial<TikzSettings> & {
-		/** Pre-1.1 spelling, still present in existing `data.json` files. */
-		invertColorsInDarkMode?: unknown;
-	};
-	const merged: TikzSettings = { ...DEFAULT_SETTINGS, ...raw };
-
-	if (!ENGINE_IDS.includes(merged.engine)) merged.engine = DEFAULT_ENGINE;
-	if (!Array.isArray(merged.extraPathDirs)) merged.extraPathDirs = [];
-	else merged.extraPathDirs = merged.extraPathDirs.filter((dir) => typeof dir === "string");
-	if (typeof merged.defaultPreamble !== "string") merged.defaultPreamble = DEFAULT_PREAMBLE;
-	if (typeof merged.compileTimeoutSeconds !== "number" || !Number.isFinite(merged.compileTimeoutSeconds)) {
-		merged.compileTimeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
-	}
-	if (typeof merged.maxCacheEntries !== "number" || !Number.isFinite(merged.maxCacheEntries)) {
-		merged.maxCacheEntries = DEFAULT_SETTINGS.maxCacheEntries;
-	}
-	merged.allowShellEscape = merged.allowShellEscape === true;
-	merged.enginePath = typeof merged.enginePath === "string" ? merged.enginePath : "";
-	merged.dvisvgmPath = typeof merged.dvisvgmPath === "string" ? merged.dvisvgmPath : "";
-
-	if (ADAPTATION_MODES.includes(merged.colorAdaptation)) {
-		// Already migrated; nothing to do.
-	} else if (raw.invertColorsInDarkMode === false) {
-		// The old toggle off meant "do not touch my colours".
-		merged.colorAdaptation = "off";
-	} else {
-		// Absent, or the old toggle on: the new default is strictly better at
-		// the job the old toggle was trying to do.
-		merged.colorAdaptation = DEFAULT_SETTINGS.colorAdaptation;
-	}
-
-	return merged;
-}
+export { DEFAULT_SETTINGS, mergeSettings, type TikzSettings } from "./settingsModel";
 
 export class TikzSettingTab extends PluginSettingTab {
 	plugin: TikzPlugin;
@@ -341,7 +267,7 @@ export class TikzSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Compile timeout")
 			.setDesc(
-				"Seconds allowed per stage (TeX, then dvisvgm). A compile that exceeds it is killed and reported instead of hanging.",
+				"Seconds allowed per stage (TeX, then dvisvgm), 1–3600. A compile that exceeds it is killed and reported instead of hanging.",
 			)
 			.addText((text) =>
 				text
@@ -350,7 +276,7 @@ export class TikzSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						const parsed = Number.parseInt(value, 10);
 						if (Number.isFinite(parsed) && parsed > 0) {
-							this.plugin.settings.compileTimeoutSeconds = parsed;
+							this.plugin.settings.compileTimeoutSeconds = sanitizeTimeoutSeconds(parsed);
 							await this.persist();
 						}
 					}),
