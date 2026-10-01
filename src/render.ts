@@ -186,8 +186,6 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			return;
 		}
 
-		await this.deps.cache.setLog(this.cacheKey, result.log);
-		if (this.unloaded) return;
 		this.showError(result);
 	}
 

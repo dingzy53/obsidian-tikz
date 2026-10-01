@@ -72,10 +72,6 @@ export class DiagramCache {
 		return path.join(this.dir, `${key}.svg`);
 	}
 
-	private logPath(key: string): string {
-		return path.join(this.dir, `${key}.log`);
-	}
-
 	/** Returns the cached SVG, or null on a miss. */
 	async get(key: string): Promise<string | null> {
 		try {
@@ -89,27 +85,35 @@ export class DiagramCache {
 	async set(key: string, svg: string): Promise<void> {
 		await this.ensureDir();
 		await fsp.writeFile(this.svgPath(key), svg, "utf8");
-		// A previous failure left a log next to this key; the render now
-		// succeeded, so it is stale.
-		await fsp.rm(this.logPath(key), { force: true }).catch(() => undefined);
 		await this.sweep();
 	}
 
-	/** Caches a failure log so a past failure can be inspected later. */
-	async setLog(key: string, log: string): Promise<void> {
-		await this.ensureDir();
-		await fsp.writeFile(this.logPath(key), log, "utf8");
-	}
-
-	async getLog(key: string): Promise<string | null> {
+	/**
+	 * Removes `<key>.log` files. Versions before 1.2 wrote one per failed
+	 * compile, nothing ever read them, and nothing swept them, so they only
+	 * accumulated.
+	 */
+	async purgeLegacyLogs(): Promise<number> {
+		let names: string[];
 		try {
-			return await fsp.readFile(this.logPath(key), "utf8");
+			names = await fsp.readdir(this.dir);
 		} catch {
-			return null;
+			return 0;
 		}
+		let removed = 0;
+		for (const name of names) {
+			if (!name.endsWith(".log")) continue;
+			try {
+				await fsp.rm(path.join(this.dir, name), { force: true });
+				removed++;
+			} catch {
+				// Raced with another process.
+			}
+		}
+		return removed;
 	}
 
-	/** Deletes every cached SVG and log. Returns the number of files removed. */
+	/** Deletes every cached SVG (and any legacy log). Returns the number of files removed. */
 	async clear(): Promise<number> {
 		let names: string[];
 		try {
@@ -156,7 +160,7 @@ export class DiagramCache {
 
 	/**
 	 * Enforces the max-entries setting (plan §6.5) by dropping the least
-	 * recently written SVGs, along with their failure logs.
+	 * recently written SVGs.
 	 */
 	async sweep(): Promise<void> {
 		if (this.maxEntries <= 0) return;
@@ -185,7 +189,6 @@ export class DiagramCache {
 		for (const stale of svgs.slice(this.maxEntries)) {
 			const key = stale.name.replace(/\.svg$/, "");
 			await fsp.rm(this.svgPath(key), { force: true }).catch(() => undefined);
-			await fsp.rm(this.logPath(key), { force: true }).catch(() => undefined);
 		}
 	}
 }
