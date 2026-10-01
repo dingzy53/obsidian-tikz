@@ -44,7 +44,12 @@ are reused; the entire rendering backend is new.
    silent infinite spinners — that's the exact upstream bug this rewrite
    exists to fix.
 6. **Always show the real compiler log on failure**, not a generic message.
-7. Plugin `id` in `manifest.json`: lowercase + hyphens only, must not contain
+7. **SVG output is untrusted.** `optimizeSVG` must keep failing closed
+   (`SvgRejectedError`) and `render.ts` must insert via `DOMParser`/`importNode`,
+   never `innerHTML`. Widen the element allowlist rather than relaxing it.
+8. **File reads stay restricted by default.** TeX runs with `openin_any=p`
+   unless the user opts out via the "Restrict file access" setting.
+9. Plugin `id` in `manifest.json`: lowercase + hyphens only, must not contain
    `"obsidian"`, must not end in `"plugin"` (Obsidian manifest validation
    will reject it otherwise).
 
@@ -52,11 +57,15 @@ are reused; the entire rendering backend is new.
 
 ```
 src/main.ts              Plugin entry: onload/onunload, wires everything up
-src/settings.ts          PluginSettingTab + settings schema
+src/settings.ts          PluginSettingTab (Obsidian UI)
+src/settingsModel.ts     Settings schema, defaults, mergeSettings/validation
+                         (pure, no obsidian import)
+src/limiter.ts           Bounded-concurrency queue for compiles (pure)
 src/render.ts            registerMarkdownCodeBlockProcessor handler,
                          loading state, error block, dark-mode + SVGO
-src/svg.ts               Pure SVG post-processing: dark-mode remap, sanitising,
-                         id namespacing, SVGO
+src/svg.ts               Pure SVG post-processing: dark-mode remap, allowlist
+                         sanitising (SVGO tree plugin, fail-closed), id
+                         namespacing, SVGO
 src/cache.ts             content-hash disk cache (read/write/clear)
 src/compiler/
   index.ts               compiler barrel re-exports

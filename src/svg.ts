@@ -8,6 +8,8 @@
  */
 
 import { optimize } from "svgo";
+import type { CustomPlugin } from "svgo";
+import type { XastChild, XastParent } from "svgo/lib/types";
 
 /** How diagram colours are made to work on both a light and a dark theme. */
 export type ColorAdaptation =
@@ -309,22 +311,121 @@ export function prefixSvgIds(svg: string, prefix: string): string {
 	}
 	if (ids.size === 0) return svg;
 
-	let out = svg;
-	for (const id of ids) {
-		const prefixed = `${prefix}${id}`;
-		out = out
-			.replaceAll(`id='${id}'`, `id='${prefixed}'`)
-			.replaceAll(`id="${id}"`, `id="${prefixed}"`)
-			.replaceAll(`href='#${id}'`, `href='#${prefixed}'`)
-			.replaceAll(`href="#${id}"`, `href="#${prefixed}"`)
-			.replaceAll(`url(#${id})`, `url(#${prefixed})`);
-	}
-	return out;
+	// One pass over the document instead of one per id: pgfplots output can
+	// define thousands of glyph ids, and a replace-per-id is quadratic.
+	const reference =
+		/(\bid\s*=\s*)(['"])([^'"]+)\2|(\bhref\s*=\s*)(['"])#([^'"]+)\5|url\(\s*(['"]?)#([^'")\s]+)\7\s*\)/g;
+	return svg.replace(
+		reference,
+		(
+			whole: string,
+			idAttr: string | undefined,
+			idQuote: string | undefined,
+			idValue: string | undefined,
+			hrefAttr: string | undefined,
+			hrefQuote: string | undefined,
+			hrefValue: string | undefined,
+			urlQuote: string | undefined,
+			urlValue: string | undefined,
+		) => {
+			if (idAttr !== undefined && idValue !== undefined && ids.has(idValue)) {
+				return `${idAttr}${idQuote}${prefix}${idValue}${idQuote}`;
+			}
+			if (hrefAttr !== undefined && hrefValue !== undefined && ids.has(hrefValue)) {
+				return `${hrefAttr}${hrefQuote}#${prefix}${hrefValue}${hrefQuote}`;
+			}
+			if (urlValue !== undefined && ids.has(urlValue)) {
+				return `url(${urlQuote}#${prefix}${urlValue}${urlQuote})`;
+			}
+			return whole;
+		},
+	);
+}
+
+/** Elements dvisvgm / PGF can legitimately produce. Everything else is dropped. */
+const ALLOWED_ELEMENTS = new Set([
+	"svg", "g", "defs", "use", "symbol", "title", "desc",
+	"path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+	"text", "tspan",
+	"clipPath", "mask", "pattern", "marker",
+	"linearGradient", "radialGradient", "stop",
+	"image",
+	"filter", "feBlend", "feColorMatrix", "feComposite", "feFlood",
+	"feGaussianBlur", "feMerge", "feMergeNode", "feOffset",
+]);
+
+/** Elements whose text content is rendered or harmless; text elsewhere is dropped. */
+const TEXT_PARENTS = new Set(["text", "tspan", "title", "desc"]);
+
+const DATA_IMAGE_HREF = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]+$/i;
+
+/** True when an attribute value can fetch or run something outside the diagram. */
+function hasExternalReference(value: string): boolean {
+	return (
+		/url\(\s*["']?\s*(?!#)/i.test(value) ||
+		/javascript\s*:|vbscript\s*:|@import|expression\s*\(|-moz-binding|behavior\s*:/i.test(value)
+	);
 }
 
 /**
- * SVGO pass, as a normal Node dependency instead of the upstream plugin's
- * browser-shimmed build (plan §9).
+ * Allowlist sanitiser, run on the parsed SVGO AST rather than on the raw
+ * string. A string blocklist can always be sidestepped by markup the regexes do
+ * not anticipate (`<image href="x"/onerror="…"/>` is one such case); a parsed
+ * tree can only contain what the parser understood, and this keeps only the
+ * element set dvisvgm produces plus attributes that cannot execute or fetch.
+ */
+const sanitizeTreePlugin: CustomPlugin = {
+	name: "tikzSanitize",
+	fn: () => ({
+		doctype: { enter: (node, parent) => dropChild(node, parent) },
+		instruction: { enter: (node, parent) => dropChild(node, parent) },
+		cdata: { enter: (node, parent) => dropChild(node, parent) },
+		text: {
+			enter: (node, parent) => {
+				if (parent.type !== "element" || !TEXT_PARENTS.has(parent.name)) dropChild(node, parent);
+			},
+		},
+		element: {
+			enter: (node, parent) => {
+				if (!ALLOWED_ELEMENTS.has(node.name)) {
+					dropChild(node, parent);
+					return;
+				}
+				for (const [name, value] of Object.entries(node.attributes)) {
+					const lower = name.toLowerCase();
+					let keep = true;
+					if (lower.startsWith("on") || lower === "xml:base") {
+						keep = false;
+					} else if (lower === "href" || lower === "xlink:href") {
+						const target = value.trim();
+						keep = target.startsWith("#") || (node.name === "image" && DATA_IMAGE_HREF.test(target));
+					} else if (hasExternalReference(value)) {
+						keep = false;
+					}
+					if (!keep) delete node.attributes[name];
+				}
+			},
+		},
+	}),
+};
+
+function dropChild(node: XastChild, parent: XastParent): void {
+	parent.children = parent.children.filter((child) => child !== node);
+}
+
+/** Thrown when the generated SVG cannot be parsed and so cannot be vetted. */
+export class SvgRejectedError extends Error {
+	constructor(cause: unknown) {
+		super(
+			`The generated SVG could not be validated: ${cause instanceof Error ? cause.message : String(cause)}`,
+		);
+		this.name = "SvgRejectedError";
+	}
+}
+
+/**
+ * Sanitise + namespace + SVGO pass, as a normal Node dependency instead of the
+ * upstream plugin's browser-shimmed build (plan §9).
  *
  * `cleanupIds` stays disabled (upstream's reason: inline diagrams in one
  * document must not collide — now additionally guaranteed by
@@ -332,15 +433,16 @@ export function prefixSvgIds(svg: string, prefix: string): string {
  * the viewBox would break scaling in the reading pane. Note the SVGO v3
  * spelling `cleanupIds` — upstream's `cleanupIDs` no longer matches.
  *
- * Never throws: if SVGO cannot parse something (a colour function in an
- * attribute, for instance), the unoptimised SVG is used instead. A failed
- * optimisation must never cost the user their diagram.
+ * Fails closed: the SVG is untrusted, so one SVGO cannot parse is rejected
+ * with {@link SvgRejectedError} rather than being displayed unsanitised. The
+ * output is re-serialised by SVGO, so it is well-formed and escaped.
  */
 export function optimizeSVG(svg: string, prefix: string): string {
 	const prefixed = prefixSvgIds(sanitizeSvg(svg), prefix);
 	try {
 		const result = optimize(prefixed, {
 			plugins: [
+				sanitizeTreePlugin,
 				{
 					name: "preset-default",
 					params: {
@@ -355,10 +457,10 @@ export function optimizeSVG(svg: string, prefix: string): string {
 		if (typeof result.data === "string" && result.data.trim().length > 0) {
 			return result.data;
 		}
+		throw new Error("the sanitiser produced no output");
 	} catch (error) {
-		console.warn("[tikz] SVGO optimisation failed; using the raw SVG.", error);
+		throw new SvgRejectedError(error);
 	}
-	return prefixed;
 }
 
 /**

@@ -23,6 +23,9 @@ import * as path from "node:path";
  */
 export const CACHE_VERSION = 1;
 
+/** A hit refreshes an entry's mtime at most this often. */
+const TOUCH_INTERVAL_MS = 60_000;
+
 export interface CacheKeyInput {
 	/** Tidied block source. */
 	source: string;
@@ -72,44 +75,67 @@ export class DiagramCache {
 		return path.join(this.dir, `${key}.svg`);
 	}
 
-	private logPath(key: string): string {
-		return path.join(this.dir, `${key}.log`);
-	}
-
-	/** Returns the cached SVG, or null on a miss. */
+	/** Returns the cached SVG, or null on a miss. A hit counts as a use. */
 	async get(key: string): Promise<string | null> {
+		const file = this.svgPath(key);
 		try {
-			const svg = await fsp.readFile(this.svgPath(key), "utf8");
-			return svg.trim().length > 0 ? svg : null;
+			const svg = await fsp.readFile(file, "utf8");
+			if (svg.trim().length === 0) return null;
+			await this.touch(file);
+			return svg;
 		} catch {
 			return null;
+		}
+	}
+
+	/**
+	 * Eviction orders by mtime, so a hit refreshes it: otherwise the diagrams
+	 * you look at most would be the first to go once the cache is full. Skipped
+	 * when the entry is already fresh, to avoid a write on every render.
+	 */
+	private async touch(file: string): Promise<void> {
+		try {
+			const stat = await fsp.stat(file);
+			if (Date.now() - stat.mtimeMs < TOUCH_INTERVAL_MS) return;
+			const now = new Date();
+			await fsp.utimes(file, now, now);
+		} catch {
+			// Best effort; a failed touch only affects eviction order.
 		}
 	}
 
 	async set(key: string, svg: string): Promise<void> {
 		await this.ensureDir();
 		await fsp.writeFile(this.svgPath(key), svg, "utf8");
-		// A previous failure left a log next to this key; the render now
-		// succeeded, so it is stale.
-		await fsp.rm(this.logPath(key), { force: true }).catch(() => undefined);
 		await this.sweep();
 	}
 
-	/** Caches a failure log so a past failure can be inspected later. */
-	async setLog(key: string, log: string): Promise<void> {
-		await this.ensureDir();
-		await fsp.writeFile(this.logPath(key), log, "utf8");
-	}
-
-	async getLog(key: string): Promise<string | null> {
+	/**
+	 * Removes `<key>.log` files. Earlier versions wrote one per failed
+	 * compile, nothing ever read them, and nothing swept them, so they only
+	 * accumulated.
+	 */
+	async purgeLegacyLogs(): Promise<number> {
+		let names: string[];
 		try {
-			return await fsp.readFile(this.logPath(key), "utf8");
+			names = await fsp.readdir(this.dir);
 		} catch {
-			return null;
+			return 0;
 		}
+		let removed = 0;
+		for (const name of names) {
+			if (!name.endsWith(".log")) continue;
+			try {
+				await fsp.rm(path.join(this.dir, name), { force: true });
+				removed++;
+			} catch {
+				// Raced with another process.
+			}
+		}
+		return removed;
 	}
 
-	/** Deletes every cached SVG and log. Returns the number of files removed. */
+	/** Deletes every cached SVG (and any legacy log). Returns the number of files removed. */
 	async clear(): Promise<number> {
 		let names: string[];
 		try {
@@ -156,7 +182,7 @@ export class DiagramCache {
 
 	/**
 	 * Enforces the max-entries setting (plan §6.5) by dropping the least
-	 * recently written SVGs, along with their failure logs.
+	 * recently used SVGs (hits refresh the modification time).
 	 */
 	async sweep(): Promise<void> {
 		if (this.maxEntries <= 0) return;
@@ -185,7 +211,6 @@ export class DiagramCache {
 		for (const stale of svgs.slice(this.maxEntries)) {
 			const key = stale.name.replace(/\.svg$/, "");
 			await fsp.rm(this.svgPath(key), { force: true }).catch(() => undefined);
-			await fsp.rm(this.logPath(key), { force: true }).catch(() => undefined);
 		}
 	}
 }

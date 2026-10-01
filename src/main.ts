@@ -23,6 +23,7 @@ export default class TikzPlugin extends Plugin {
 		await this.cache.ensureDir().catch((error: unknown) => {
 			console.error("[tikz] Could not create the cache directory.", error);
 		});
+		void this.cache.purgeLegacyLogs().catch(() => undefined);
 
 		// Scratch directories from an interrupted session are not in use any
 		// more (plan §6.3). Failures are kept for the "Reveal build folder"

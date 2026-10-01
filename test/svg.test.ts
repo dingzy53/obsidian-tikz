@@ -11,6 +11,7 @@ import {
 	relativeLuminance,
 	rgbToHsl,
 	sanitizeSvg,
+	SvgRejectedError,
 	toHex,
 } from "../src/svg";
 
@@ -214,6 +215,26 @@ describe("prefixSvgIds", () => {
 		expect(out).toContain(`href='#p-g0-12'`);
 	});
 
+	it("handles quoted url() references and whitespace around =", () => {
+		const out = prefixSvgIds(`<g id = 'a'/><rect fill="url('#a')"/><use href = "#a"/>`, "p-");
+		expect(out).toBe(`<g id = 'p-a'/><rect fill="url('#p-a')"/><use href = "#p-a"/>`);
+	});
+
+	it("leaves references to ids that are not defined here untouched", () => {
+		const out = prefixSvgIds(`<g id='a'/><use href='#elsewhere'/><rect fill='url(#other)'/>`, "p-");
+		expect(out).toBe(`<g id='p-a'/><use href='#elsewhere'/><rect fill='url(#other)'/>`);
+	});
+
+	it("stays fast with thousands of ids", () => {
+		const defs = Array.from({ length: 5000 }, (_, i) => `<path id='g0-${i}' d='M0 0'/>`).join("");
+		const uses = Array.from({ length: 5000 }, (_, i) => `<use href='#g0-${i}'/>`).join("");
+		const started = performance.now();
+		const out = prefixSvgIds(`<svg>${defs}${uses}</svg>`, "p-");
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(out).toContain("<use href='#p-g0-4999'/>");
+		expect(out).toContain("id='p-g0-4999'");
+	});
+
 	it("is a no-op when there are no ids", () => {
 		expect(prefixSvgIds(`<svg><path d='M0 0'/></svg>`, "p-")).toBe(`<svg><path d='M0 0'/></svg>`);
 	});
@@ -288,10 +309,57 @@ describe("optimizeSVG", () => {
 		expect(out).not.toMatch(/#fff/i);
 	});
 
-	it("falls back to the raw SVG when given something SVGO cannot parse", () => {
-		// Not valid XML: SVGO will complain, and we must still return markup.
+	it("rejects, rather than passes through, an SVG that cannot be parsed", () => {
+		// The SVG is untrusted: if it cannot be parsed it cannot be vetted.
 		const broken = "<svg><g fill='#000'</svg>";
-		expect(() => optimizeSVG(broken, "p-")).not.toThrow();
+		expect(() => optimizeSVG(broken, "p-")).toThrow(SvgRejectedError);
+	});
+
+	it("rejects the unquoted-slash handler that slips past the regex sanitiser", () => {
+		const evasive = `<svg xmlns='http://www.w3.org/2000/svg'><image href="x"/onerror="alert(1)"/></svg>`;
+		expect(() => optimizeSVG(evasive, "p-")).toThrow(SvgRejectedError);
+	});
+
+	it("drops elements outside the allowlist: style, a, animate, set", () => {
+		const hostile =
+			`<svg xmlns='http://www.w3.org/2000/svg'>` +
+			`<style>@import url(https://example.com/x.css);</style>` +
+			`<a href='https://example.com'><rect width='9' height='9'/></a>` +
+			`<animate attributeName='href' to='javascript:alert(1)'/>` +
+			`<rect id='keep' width='9' height='9'/></svg>`;
+		const out = optimizeSVG(hostile, "p-");
+		expect(out).not.toMatch(/<style|<a[ >]|<animate|@import|example\.com/);
+		expect(out).toContain("p-keep");
+	});
+
+	it("drops handlers, external hrefs and external url() references", () => {
+		const hostile =
+			`<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'>` +
+			`<rect width='9' height='9' onclick='alert(1)' fill='url(https://example.com/p)'/>` +
+			`<use xlink:href='https://example.com/sprite.svg#a'/>` +
+			`<use href='javascript&#58;alert(1)'/>` +
+			`<path d='M0 0h9' fill='red'/></svg>`;
+		const out = optimizeSVG(hostile, "p-");
+		expect(out).not.toMatch(/onclick|example\.com|javascript/i);
+		expect(out).toContain("<path");
+	});
+
+	it("keeps local references and inline raster images", () => {
+		const data = "data:image/png;base64,iVBORw0KGgo=";
+		const svg =
+			`<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'>` +
+			`<defs><path id='g0-1' d='M0 0h9'/></defs><use xlink:href='#g0-1'/>` +
+			`<image width='4' height='4' xlink:href='${data}'/></svg>`;
+		const out = optimizeSVG(svg, "p-");
+		expect(out).toContain('href="#p-g0-1"');
+		expect(out).toContain(data);
+	});
+
+	it("rejects a non-image data: href", () => {
+		const svg =
+			`<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'>` +
+			`<image xlink:href='data:image/svg+xml;base64,PHN2Zy8+'/><rect width='1' height='1'/></svg>`;
+		expect(optimizeSVG(svg, "p-")).not.toContain("svg+xml");
 	});
 });
 

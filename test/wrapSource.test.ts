@@ -29,6 +29,16 @@ describe("detectTier", () => {
 		expect(detectTier("\\begin{document}\n\\begin{tikzpicture}\\end{tikzpicture}\n\\end{document}")).toBe(2);
 	});
 
+	it("ignores a commented-out \\documentclass or \\begin{document}", () => {
+		expect(detectTier("% \\documentclass{article}\n\\draw (0,0)--(1,1);")).toBe(3);
+		expect(detectTier("\\draw (0,0)--(1,1); % \\begin{document}")).toBe(3);
+		expect(detectTier("% \\documentclass{article}\n\\begin{document}\\end{document}")).toBe(2);
+	});
+
+	it("still treats an escaped percent as ordinary text", () => {
+		expect(detectTier("\\node{50\\%}; \\documentclass{x}")).toBe(1);
+	});
+
 	it("tier 3: bare TikZ", () => {
 		expect(detectTier("\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}")).toBe(3);
 	});
@@ -86,6 +96,33 @@ describe("wrapTikzSource", () => {
 			source: "\\usetikzlibrary{arrows.meta}\n\\begin{tikzpicture}\\end{tikzpicture}",
 		});
 		expect(tex.indexOf("\\usetikzlibrary{arrows.meta}")).toBeLessThan(tex.indexOf("\\begin{document}"));
+	});
+
+	it("loads the block's own packages before the default preamble (no xcolor option clash)", () => {
+		const source = "\\usepackage[dvipsnames]{xcolor}\n\\begin{tikzpicture}\\end{tikzpicture}";
+		const { tex } = wrapTikzSource({ ...base, source });
+		expect(tex.indexOf("[dvipsnames]{xcolor}")).toBeLessThan(tex.indexOf("\\usepackage{tikz}"));
+		// ...but still after the driver line, which must precede any pgf load.
+		expect(tex.indexOf(PGF_DRIVER_LINE)).toBeLessThan(tex.indexOf("[dvipsnames]{xcolor}"));
+	});
+
+	it("keeps \\usetikzlibrary after tikz is loaded", () => {
+		const source = "\\usetikzlibrary{arrows.meta}\n\\begin{tikzpicture}\\end{tikzpicture}";
+		const { tex } = wrapTikzSource({ ...base, source });
+		expect(tex.indexOf("\\usepackage{tikz}")).toBeLessThan(tex.indexOf("\\usetikzlibrary{arrows.meta}"));
+	});
+
+	it("tier 2: reorders the block's own preamble lines, leaving the body alone", () => {
+		const source =
+			"\\usepackage[dvipsnames]{xcolor}\n\\usetikzlibrary{calc}\n\\begin{document}\n\\usepackage{inbody}\n\\end{document}";
+		const { tex, tier } = wrapTikzSource({ ...base, source });
+		expect(tier).toBe(2);
+		const at = (needle: string): number => tex.indexOf(needle);
+		expect(at("[dvipsnames]{xcolor}")).toBeLessThan(at("\\usepackage{tikz}"));
+		expect(at("\\usepackage{tikz}")).toBeLessThan(at("\\usetikzlibrary{calc}"));
+		expect(at("\\usetikzlibrary{calc}")).toBeLessThan(at("\\begin{document}"));
+		// Lines after \begin{document} are the body and must not be moved.
+		expect(at("\\begin{document}")).toBeLessThan(at("\\usepackage{inbody}"));
 	});
 
 	it("omits the pgf driver line for pdflatex, which writes PDF operators directly", () => {

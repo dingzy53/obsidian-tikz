@@ -54,24 +54,20 @@ describe("DiagramCache", () => {
 		expect(await cache.get("nope")).toBeNull();
 	});
 
-	it("round-trips a failure log", async () => {
+	it("purges legacy failure logs but leaves cached SVGs alone", async () => {
 		const cache = new DiagramCache(dir);
-		await cache.setLog("abc", "! Undefined control sequence.");
-		expect(await cache.getLog("abc")).toContain("Undefined control sequence");
-	});
-
-	it("drops a stale failure log once the same key succeeds", async () => {
-		const cache = new DiagramCache(dir);
-		await cache.setLog("abc", "old failure");
-		await cache.set("abc", "<svg/>");
-		expect(await cache.getLog("abc")).toBeNull();
+		await cache.set("keep", "<svg/>");
+		await fsp.writeFile(path.join(dir, "old.log"), "stale failure");
+		expect(await cache.purgeLegacyLogs()).toBe(1);
+		expect(await cache.get("keep")).toBe("<svg/>");
+		expect((await fsp.readdir(dir)).filter((name) => name.endsWith(".log"))).toEqual([]);
 	});
 
 	it("reports stats", async () => {
 		const cache = new DiagramCache(dir);
 		await cache.set("a", "<svg/>");
 		await cache.set("b", "<svg/>");
-		await cache.setLog("c", "log");
+		await fsp.writeFile(path.join(dir, "c.log"), "log");
 		const stats = await cache.stats();
 		expect(stats.entries).toBe(2);
 		expect(stats.bytes).toBeGreaterThan(0);
@@ -101,6 +97,24 @@ describe("DiagramCache", () => {
 		expect(await cache.get("oldest")).toBeNull();
 		expect(await cache.get("middle")).toBe("<svg/>");
 		expect(await cache.get("newest")).toBe("<svg/>");
+	});
+
+	it("evicts the least recently *used* entry, not the least recently written", async () => {
+		const cache = new DiagramCache(dir, 2);
+		const hourAgo = new Date(Date.now() - 3_600_000);
+		const twoHoursAgo = new Date(Date.now() - 7_200_000);
+		await cache.set("popular", "<svg/>");
+		await cache.set("neglected", "<svg/>");
+		await fsp.utimes(path.join(dir, "popular.svg"), twoHoursAgo, twoHoursAgo);
+		await fsp.utimes(path.join(dir, "neglected.svg"), hourAgo, hourAgo);
+
+		// "popular" is the oldest write, but it is used just now.
+		expect(await cache.get("popular")).toBe("<svg/>");
+		await cache.set("fresh", "<svg/>");
+
+		expect(await cache.get("neglected")).toBeNull();
+		expect(await cache.get("popular")).toBe("<svg/>");
+		expect(await cache.get("fresh")).toBe("<svg/>");
 	});
 
 	it("does not sweep when the limit is zero (unlimited)", async () => {

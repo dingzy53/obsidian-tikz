@@ -1,7 +1,10 @@
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	BinaryNotFoundError,
+	buildHostSpawn,
+	createTtlMemo,
 	describeResolution,
 	isExecutable,
 	isFlatpak,
@@ -110,5 +113,83 @@ describe("resolveBinary", () => {
 			allowHost: false,
 		});
 		expect(res.found).toBe(false);
+	});
+});
+
+describe("buildHostSpawn", () => {
+	it("runs through flatpak-spawn --host in the given directory", () => {
+		const { command, args } = buildHostSpawn("dvilualatex", ["-halt-on-error", "x.tex"], "/work");
+		expect(command).toBe("/usr/bin/flatpak-spawn");
+		expect(args.slice(0, 3)).toEqual(["--host", "--watch-bus", "--directory=/work"]);
+		expect(args.slice(-3)).toEqual(["dvilualatex", "-halt-on-error", "x.tex"].slice(-3));
+	});
+
+	it("never replaces the host PATH via --env", () => {
+		const { args } = buildHostSpawn("latex", [], "/work", ["/extra"]);
+		expect(args.some((arg) => arg.startsWith("--env="))).toBe(false);
+	});
+
+	it("passes extra environment variables explicitly, since the host does not inherit ours", () => {
+		const { args } = buildHostSpawn("latex", [], "/work", [], { openin_any: "p" });
+		const dashDash = args.indexOf("--");
+		expect(args.slice(0, dashDash)).toContain("--env=openin_any=p");
+	});
+
+	it("passes directories and the command as arguments, not as script text", () => {
+		const evil = "/tmp/$(touch pwned);x";
+		const { args } = buildHostSpawn("latex", ["a b", "; rm -rf /"], "/work", [evil]);
+		const scriptIndex = args.indexOf("-c") + 1;
+		expect(args[scriptIndex]).toBe('PATH="$1:$PATH"; shift; exec "$@"');
+		expect(args.some((arg) => arg.startsWith(`${evil}:`))).toBe(true);
+		expect(args.slice(-3)).toEqual(["latex", "a b", "; rm -rf /"]);
+	});
+
+	it.skipIf(process.platform === "win32")("the wrapper prepends dirs to the existing PATH and runs the command", () => {
+		const { args } = buildHostSpawn("sh", ["-c", "echo $PATH"], "/", ["/first-extra"]);
+		// Drop flatpak-spawn's own options and run the wrapper locally.
+		const wrapper = args.slice(args.indexOf("--") + 1);
+		const out = execFileSync(wrapper[0], wrapper.slice(1), {
+			encoding: "utf8",
+			env: { PATH: "/usr/bin:/bin" },
+		}).trim();
+		expect(out.startsWith("/first-extra:")).toBe(true);
+		expect(out.endsWith(":/usr/bin:/bin")).toBe(true);
+	});
+});
+
+describe("createTtlMemo", () => {
+	it("reuses a value until it expires, then recomputes", () => {
+		let clock = 0;
+		let calls = 0;
+		const memo = createTtlMemo<number>(100, () => clock);
+		const compute = (): number => ++calls;
+
+		expect(memo.get("k", compute)).toBe(1);
+		clock = 99;
+		expect(memo.get("k", compute)).toBe(1);
+		clock = 100;
+		expect(memo.get("k", compute)).toBe(2);
+	});
+
+	it("keys entries independently and caches falsy results", () => {
+		let calls = 0;
+		const memo = createTtlMemo<boolean>(100, () => 0);
+		const compute = (): boolean => {
+			calls++;
+			return false;
+		};
+		memo.get("a", compute);
+		memo.get("a", compute);
+		memo.get("b", compute);
+		expect(calls).toBe(2);
+	});
+
+	it("clear() drops everything", () => {
+		let calls = 0;
+		const memo = createTtlMemo<number>(100, () => 0);
+		memo.get("a", () => ++calls);
+		memo.clear();
+		memo.get("a", () => ++calls);
+		expect(calls).toBe(2);
 	});
 });

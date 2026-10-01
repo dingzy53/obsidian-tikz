@@ -18,6 +18,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
 	BinaryNotFoundError,
+	buildHostSpawn,
 	buildSpawnEnv,
 	isFlatpak,
 	resolveBinary,
@@ -108,6 +109,12 @@ export interface CompileOptions {
 	extraPathDirs?: string[];
 	/** Opt-in `\write18` support. Off by default (AGENTS.md rule 3). */
 	allowShellEscape?: boolean;
+	/**
+	 * Run TeX with `openin_any=p` (paranoid), so a block cannot `\input` or
+	 * `\includegraphics` an arbitrary file such as `~/.ssh/config` and render
+	 * its contents into a note. On unless explicitly set to `false`.
+	 */
+	restrictFileAccess?: boolean;
 	/** Per-stage timeout. Defaults to {@link DEFAULT_TIMEOUT_SECONDS}. */
 	timeoutMs?: number;
 	/** Scratch directory. A fresh one under `os.tmpdir()` is used by default. */
@@ -147,8 +154,8 @@ export interface CompileFailure {
 
 export type CompileResult = CompileSuccess | CompileFailure;
 
-/** Cap on captured process output, so a runaway log cannot blow up the DOM. */
-const MAX_CAPTURE_BYTES = 1024 * 1024;
+/** Cap on captured process output (in characters), so a runaway log cannot blow up the DOM. */
+const MAX_CAPTURE_CHARS = 1024 * 1024;
 /** Cap on the log string returned to callers. */
 const MAX_LOG_CHARS = 400_000;
 
@@ -166,7 +173,16 @@ function killProcessTree(pid: number | undefined, child: ReturnType<typeof spawn
 	if (pid === undefined) return;
 	if (process.platform === "win32") {
 		try {
-			spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			// Without a listener a failed spawn (taskkill missing from PATH)
+			// would surface as an uncaught 'error' event.
+			killer.on("error", () => {
+				try {
+					child.kill("SIGKILL");
+				} catch {
+					// Already gone.
+				}
+			});
 		} catch {
 			child.kill("SIGKILL");
 		}
@@ -198,6 +214,8 @@ function runProcess(
 		timeoutMs: number;
 		viaHost?: boolean;
 		extraDirs?: string[];
+		/** Variables to set on the host process (Flatpak only; others use `env`). */
+		hostEnv?: Record<string, string>;
 	},
 ): Promise<ProcessResult> {
 	return new Promise((resolve) => {
@@ -206,39 +224,49 @@ function runProcess(
 		let settled = false;
 		let timedOut = false;
 
-		const spawnCmd = options.viaHost ? "/usr/bin/flatpak-spawn" : command;
-		const spawnArgs = options.viaHost
-			? [
-					"--host",
-					"--watch-bus",
-					`--directory=${options.cwd}`,
-					...(options.extraDirs && options.extraDirs.length > 0
-						? [`--env=PATH=${options.extraDirs.join(":")}:${process.env.PATH ?? ""}`]
-						: []),
-					"--",
-					command,
-					...args,
-			  ]
-			: args;
+		const host = options.viaHost
+			? buildHostSpawn(command, args, options.cwd, options.extraDirs, options.hostEnv)
+			: null;
+		const spawnCmd = host ? host.command : command;
+		const spawnArgs = host ? host.args : args;
 
-		const child = spawn(spawnCmd, spawnArgs, {
-			cwd: options.cwd,
-			env: options.env,
-			stdio: ["ignore", "pipe", "pipe"],
-			// Own process group, so a timeout can kill helper processes too.
-			detached: process.platform !== "win32",
-			windowsHide: true,
-		});
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(spawnCmd, spawnArgs, {
+				cwd: options.cwd,
+				env: options.env,
+				stdio: ["ignore", "pipe", "pipe"],
+				// Own process group, so a timeout can kill helper processes too.
+				detached: process.platform !== "win32",
+				windowsHide: true,
+			});
+		} catch (error) {
+			// `spawn` can throw synchronously (e.g. EINVAL for a .bat/.cmd on
+			// Windows) instead of emitting `error`.
+			resolve({
+				code: null,
+				signal: null,
+				stdout: "",
+				stderr: "",
+				timedOut: false,
+				spawnError: error instanceof Error ? error : new Error(String(error)),
+			});
+			return;
+		}
 
-		const append = (current: string, chunk: Buffer): string => {
-			if (current.length >= MAX_CAPTURE_BYTES) return current;
-			return (current + chunk.toString("utf8")).slice(0, MAX_CAPTURE_BYTES);
+		const append = (current: string, chunk: string): string => {
+			if (current.length >= MAX_CAPTURE_CHARS) return current;
+			return (current + chunk).slice(0, MAX_CAPTURE_CHARS);
 		};
 
-		child.stdout?.on("data", (chunk: Buffer) => {
+		// `setEncoding` decodes with a stateful decoder, so a multi-byte UTF-8
+		// character split across two chunks is not turned into U+FFFD pairs.
+		child.stdout?.setEncoding("utf8");
+		child.stderr?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
 			stdout = append(stdout, chunk);
 		});
-		child.stderr?.on("data", (chunk: Buffer) => {
+		child.stderr?.on("data", (chunk: string) => {
 			stderr = append(stderr, chunk);
 		});
 
@@ -285,15 +313,25 @@ export function extractErrorSummary(log: string): string | null {
 }
 
 /** Turns a compiler log into an actionable hint, when we recognise the case. */
-export function deriveHint(log: string, engine: EngineId): string | undefined {
+export function deriveHint(
+	log: string,
+	engine: EngineId,
+	restrictedFiles = false,
+): string | undefined {
 	// TeX wraps log lines at ~79 columns, so a phrase like "not found" can be
 	// split across two lines. Collapse the newlines for the phrase checks;
 	// the line-anchored checks below use the original text.
 	const flat = log.replace(/\s*\n\s*/g, " ");
 
-	const missingFile = flat.match(/File [`'"]?([^'"\s`]+)[`'"]? not\s+found/);
+	// LaTeX says "File `x' not found"; the bare \input primitive says "I can't find file `x'".
+	const missingFile = flat.match(
+		/File [`'"]?([^'"\s`]+)[`'"]? not\s+found|I can't find file [`'"]?([^'"\s`]+)/,
+	);
 	if (missingFile) {
-		const file = missingFile[1];
+		const file = missingFile[1] ?? missingFile[2];
+		if (restrictedFiles && /^(?:\/|~|[A-Za-z]:[\\/])/.test(file)) {
+			return `Reading "${file}" is blocked: file access outside the build folder is restricted so a note cannot read private files. Turn off "Restrict file access" in the plugin settings if you trust this vault.`;
+		}
 		if (file.endsWith(".sty")) {
 			const pkg = file.replace(/\.sty$/, "");
 			return `The LaTeX package "${pkg}" is not installed in your TeX distribution. Install it (e.g. \`tlmgr install ${pkg}\`) or remove the \\usepackage line.`;
@@ -391,6 +429,26 @@ export async function sweepScratchDirs(maxAgeMs = 60 * 60 * 1000): Promise<numbe
  */
 export async function compileTikz(options: CompileOptions): Promise<CompileResult> {
 	const started = Date.now();
+	try {
+		return await compileTikzUnsafe(options, started);
+	} catch (error) {
+		// Backstop for the "never throws" contract: an unexpected exception
+		// (a bug, an fs error outside the guarded calls) must still surface as
+		// a failure with a message instead of an unhandled rejection.
+		const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+		return {
+			ok: false,
+			kind: "internal",
+			summary: `Unexpected error while compiling: ${error instanceof Error ? error.message : String(error)}`,
+			log: message,
+			tex: "",
+			durationMs: Date.now() - started,
+			workDir: options.workDir ?? "",
+		};
+	}
+}
+
+async function compileTikzUnsafe(options: CompileOptions, started: number): Promise<CompileResult> {
 	const spec = ENGINE_SPECS[options.engine];
 	const jobName = options.jobName ?? "diagram";
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
@@ -430,7 +488,9 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 		);
 	}
 
-	const env = buildSpawnEnv(options.extraPathDirs ?? []);
+	const restrictFiles = options.restrictFileAccess !== false;
+	const extraEnv: Record<string, string> = restrictFiles ? { openin_any: "p" } : {};
+	const env = { ...buildSpawnEnv(options.extraPathDirs ?? []), ...extraEnv };
 
 	// ---- resolve binaries -------------------------------------------------
 	let engineResolved: ResolvedBinary;
@@ -501,6 +561,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 		timeoutMs,
 		viaHost: engineResolved.viaHost,
 		extraDirs: options.extraPathDirs,
+		hostEnv: extraEnv,
 	});
 	const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
 	const engineLog = joinLog([
@@ -530,7 +591,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 
 	if (engineRun.code !== 0 || /^!\s?/m.test(engineLog)) {
 		const summary = extractErrorSummary(engineLog) ?? `The TeX engine exited with code ${engineRun.code}.`;
-		return fail("compile-error", summary, engineLog, deriveHint(engineLog, options.engine));
+		return fail("compile-error", summary, engineLog, deriveHint(engineLog, options.engine, restrictFiles));
 	}
 
 	const artifact = path.join(workDir, `${jobName}.${spec.artifactExt}`);
@@ -561,6 +622,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 		timeoutMs,
 		viaHost: dvisvgmResolved.viaHost,
 		extraDirs: options.extraPathDirs,
+		hostEnv: extraEnv,
 	});
 	if (svgRun.timedOut) {
 		return fail(
@@ -587,7 +649,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 			extractErrorSummary(svgRun.stderr + svgRun.stdout) ??
 				`dvisvgm exited with code ${svgRun.code}.`,
 			svgLog,
-			deriveHint(svgLog, options.engine),
+			deriveHint(svgLog, options.engine, restrictFiles),
 		);
 	}
 

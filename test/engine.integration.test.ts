@@ -260,6 +260,58 @@ describe.skipIf(!RUN)("engine matrix", () => {
 		expect(pathCount(svg)).toBeGreaterThan(0);
 	}, TEST_TIMEOUT);
 
+	it("accepts package options for a package the default preamble also loads", async () => {
+		// The default preamble loads circuitikz without options. Loading it
+		// again *with* options afterwards is an "Option clash"; the block's own
+		// packages therefore have to come first.
+		const svg = expectRendered(
+			await compile(
+				block(`\\usepackage[american]{circuitikz}
+\\begin{circuitikz}
+\\draw (0,0) to[R] (2,0);
+\\end{circuitikz}`),
+			),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
+	it("blocks reading files outside the build folder by default, and allows it when opted out", async () => {
+		const secret = path.join(os.tmpdir(), `tikz-secret-${randomUUID()}.tex`);
+		fs.writeFileSync(secret, "LEAKED-MARKER");
+		try {
+			const body = `\\begin{tikzpicture}\\node{\\input{${secret}}};\\end{tikzpicture}`;
+
+			const blocked = await compile(body);
+			expect(blocked.ok).toBe(false);
+			if (!blocked.ok) {
+				expect(blocked.log).toContain("can't find file");
+				expect(blocked.hint).toContain("Restrict file access");
+			}
+
+			const allowed = await compile(body, { restrictFileAccess: false });
+			expect(allowed.ok).toBe(true);
+		} finally {
+			fs.rmSync(secret, { force: true });
+		}
+	}, TEST_TIMEOUT);
+
+	it("keeps a normal diagram working under the restriction", async () => {
+		const svg = expectRendered(
+			await compile(block(`\\usetikzlibrary{calc}\n\\begin{tikzpicture}\\draw (0,0)--($(1,1)+(1,0)$);\\end{tikzpicture}`)),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
+	it("treats a commented-out \\documentclass as a comment", async () => {
+		const svg = expectRendered(
+			await compile(
+				block(`% \\documentclass{article}
+\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}`),
+			),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
 	it("LuaLaTeX supports system fonts via fontspec, which plain LaTeX cannot", async () => {
 		// `\usepackage` in a bare block is hoisted into the preamble, so this
 		// also exercises that path end to end.

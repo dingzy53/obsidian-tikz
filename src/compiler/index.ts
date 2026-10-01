@@ -22,6 +22,7 @@ export {
 	canFlatpakSpawnHost,
 	isExecutableOnHost,
 	findOnHost,
+	clearHostProbeCache,
 	splitPathList,
 	resolveBinary,
 	BinaryNotFoundError,
