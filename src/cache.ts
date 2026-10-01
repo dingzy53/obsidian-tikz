@@ -23,6 +23,9 @@ import * as path from "node:path";
  */
 export const CACHE_VERSION = 1;
 
+/** A hit refreshes an entry's mtime at most this often. */
+const TOUCH_INTERVAL_MS = 60_000;
+
 export interface CacheKeyInput {
 	/** Tidied block source. */
 	source: string;
@@ -72,13 +75,32 @@ export class DiagramCache {
 		return path.join(this.dir, `${key}.svg`);
 	}
 
-	/** Returns the cached SVG, or null on a miss. */
+	/** Returns the cached SVG, or null on a miss. A hit counts as a use. */
 	async get(key: string): Promise<string | null> {
+		const file = this.svgPath(key);
 		try {
-			const svg = await fsp.readFile(this.svgPath(key), "utf8");
-			return svg.trim().length > 0 ? svg : null;
+			const svg = await fsp.readFile(file, "utf8");
+			if (svg.trim().length === 0) return null;
+			await this.touch(file);
+			return svg;
 		} catch {
 			return null;
+		}
+	}
+
+	/**
+	 * Eviction orders by mtime, so a hit refreshes it: otherwise the diagrams
+	 * you look at most would be the first to go once the cache is full. Skipped
+	 * when the entry is already fresh, to avoid a write on every render.
+	 */
+	private async touch(file: string): Promise<void> {
+		try {
+			const stat = await fsp.stat(file);
+			if (Date.now() - stat.mtimeMs < TOUCH_INTERVAL_MS) return;
+			const now = new Date();
+			await fsp.utimes(file, now, now);
+		} catch {
+			// Best effort; a failed touch only affects eviction order.
 		}
 	}
 
@@ -160,7 +182,7 @@ export class DiagramCache {
 
 	/**
 	 * Enforces the max-entries setting (plan §6.5) by dropping the least
-	 * recently written SVGs.
+	 * recently used SVGs (hits refresh the modification time).
 	 */
 	async sweep(): Promise<void> {
 		if (this.maxEntries <= 0) return;

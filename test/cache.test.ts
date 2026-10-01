@@ -99,6 +99,24 @@ describe("DiagramCache", () => {
 		expect(await cache.get("newest")).toBe("<svg/>");
 	});
 
+	it("evicts the least recently *used* entry, not the least recently written", async () => {
+		const cache = new DiagramCache(dir, 2);
+		const hourAgo = new Date(Date.now() - 3_600_000);
+		const twoHoursAgo = new Date(Date.now() - 7_200_000);
+		await cache.set("popular", "<svg/>");
+		await cache.set("neglected", "<svg/>");
+		await fsp.utimes(path.join(dir, "popular.svg"), twoHoursAgo, twoHoursAgo);
+		await fsp.utimes(path.join(dir, "neglected.svg"), hourAgo, hourAgo);
+
+		// "popular" is the oldest write, but it is used just now.
+		expect(await cache.get("popular")).toBe("<svg/>");
+		await cache.set("fresh", "<svg/>");
+
+		expect(await cache.get("neglected")).toBeNull();
+		expect(await cache.get("popular")).toBe("<svg/>");
+		expect(await cache.get("fresh")).toBe("<svg/>");
+	});
+
 	it("does not sweep when the limit is zero (unlimited)", async () => {
 		const cache = new DiagramCache(dir, 0);
 		await cache.set("a", "<svg/>");
