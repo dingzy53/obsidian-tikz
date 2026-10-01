@@ -1,0 +1,112 @@
+/* TikZ — uses Obsidian's own CSS variables so both themes work. */
+
+.tikz-container {
+	display: flex;
+	justify-content: center;
+	margin: 0.75em 0;
+	overflow-x: auto;
+}
+
+/* Diagrams are emitted with pt dimensions; shrink to fit narrow panes. */
+.tikz-container svg {
+	max-width: 100%;
+	height: auto;
+}
+
+/*
+ * "Light canvas" mode: the diagram keeps the colours it was drawn with, so in
+ * a dark theme it needs the light page it was authored against. Padding is in
+ * `em` so it scales with the surrounding text; the border is subtle enough to
+ * read as a panel rather than a box.
+ */
+.tikz-container.tikz-light-canvas {
+	background-color: #ffffff;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	padding: 0.75em;
+	/* Diagrams are drawn on white, so keep the SVG's own ink colours. */
+	color: #000000;
+}
+
+.tikz-loading {
+	display: flex;
+	align-items: center;
+	gap: 0.4em;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	padding: 0.5em 0;
+}
+
+.tikz-error {
+	border: 1px solid var(--background-modifier-error);
+	border-radius: var(--radius-m);
+	background-color: var(--background-secondary);
+	padding: 0.75em;
+	font-size: var(--font-ui-small);
+}
+
+.tikz-error-summary {
+	color: var(--text-error);
+	font-weight: var(--font-semibold);
+}
+
+.tikz-error-hint {
+	color: var(--text-muted);
+	margin-top: 0.4em;
+}
+
+.tikz-error details {
+	margin-top: 0.5em;
+}
+
+.tikz-error summary {
+	cursor: pointer;
+	color: var(--text-muted);
+}
+
+.tikz-log {
+	max-height: 22em;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	background-color: var(--background-primary);
+	padding: 0.6em;
+	border-radius: var(--radius-s);
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+}
+
+.tikz-error-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5em;
+	margin-top: 0.6em;
+}
+
+/* Settings tab */
+
+.tikz-settings-status {
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+	color: var(--text-muted);
+	margin-bottom: 0.6em;
+}
+
+.tikz-settings-status-error {
+	color: var(--text-error);
+}
+
+.tikz-settings-warning {
+	border-left: 3px solid var(--text-warning);
+	background-color: var(--background-secondary);
+	padding: 0.5em 0.7em;
+	margin: 0.4em 0 0.8em;
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+}
+
+.tikz-preamble-input {
+	width: 100%;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+}
