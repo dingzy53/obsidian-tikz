@@ -148,8 +148,8 @@ export interface CompileFailure {
 
 export type CompileResult = CompileSuccess | CompileFailure;
 
-/** Cap on captured process output, so a runaway log cannot blow up the DOM. */
-const MAX_CAPTURE_BYTES = 1024 * 1024;
+/** Cap on captured process output (in characters), so a runaway log cannot blow up the DOM. */
+const MAX_CAPTURE_CHARS = 1024 * 1024;
 /** Cap on the log string returned to callers. */
 const MAX_LOG_CHARS = 400_000;
 
@@ -167,7 +167,16 @@ function killProcessTree(pid: number | undefined, child: ReturnType<typeof spawn
 	if (pid === undefined) return;
 	if (process.platform === "win32") {
 		try {
-			spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			// Without a listener a failed spawn (taskkill missing from PATH)
+			// would surface as an uncaught 'error' event.
+			killer.on("error", () => {
+				try {
+					child.kill("SIGKILL");
+				} catch {
+					// Already gone.
+				}
+			});
 		} catch {
 			child.kill("SIGKILL");
 		}
@@ -237,15 +246,19 @@ function runProcess(
 			return;
 		}
 
-		const append = (current: string, chunk: Buffer): string => {
-			if (current.length >= MAX_CAPTURE_BYTES) return current;
-			return (current + chunk.toString("utf8")).slice(0, MAX_CAPTURE_BYTES);
+		const append = (current: string, chunk: string): string => {
+			if (current.length >= MAX_CAPTURE_CHARS) return current;
+			return (current + chunk).slice(0, MAX_CAPTURE_CHARS);
 		};
 
-		child.stdout?.on("data", (chunk: Buffer) => {
+		// `setEncoding` decodes with a stateful decoder, so a multi-byte UTF-8
+		// character split across two chunks is not turned into U+FFFD pairs.
+		child.stdout?.setEncoding("utf8");
+		child.stderr?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
 			stdout = append(stdout, chunk);
 		});
-		child.stderr?.on("data", (chunk: Buffer) => {
+		child.stderr?.on("data", (chunk: string) => {
 			stderr = append(stderr, chunk);
 		});
 

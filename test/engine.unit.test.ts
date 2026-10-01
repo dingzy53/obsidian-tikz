@@ -37,6 +37,18 @@ describe.skipIf(!posix)("compileTikz process handling", () => {
 		if (!result.ok) expect(result.log).toContain("Undefined control sequence");
 	});
 
+	it("decodes multi-byte output split across pipe chunks", async () => {
+		// 3-byte characters, in far more than one 64 KiB chunk, so boundaries
+		// fall inside a character.
+		const engine = script("utf8-engine", `yes '€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€' | head -n 20000 >&2\nexit 1`);
+		const result = await compileTikz({ ...base, enginePath: engine, dvisvgmPath: okDvisvgm });
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.log).not.toContain("\uFFFD");
+			expect(result.log).toContain("€€€");
+		}
+	});
+
 	it("kills a hung engine and reports a timeout", async () => {
 		const engine = script("hung-engine", "sleep 30");
 		const started = Date.now();
