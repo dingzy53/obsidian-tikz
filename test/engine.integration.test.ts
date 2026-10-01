@@ -275,6 +275,33 @@ describe.skipIf(!RUN)("engine matrix", () => {
 		expect(pathCount(svg)).toBeGreaterThan(0);
 	}, TEST_TIMEOUT);
 
+	it("blocks reading files outside the build folder by default, and allows it when opted out", async () => {
+		const secret = path.join(os.tmpdir(), `tikz-secret-${randomUUID()}.tex`);
+		fs.writeFileSync(secret, "LEAKED-MARKER");
+		try {
+			const body = `\\begin{tikzpicture}\\node{\\input{${secret}}};\\end{tikzpicture}`;
+
+			const blocked = await compile(body);
+			expect(blocked.ok).toBe(false);
+			if (!blocked.ok) {
+				expect(blocked.log).toContain("can't find file");
+				expect(blocked.hint).toContain("Restrict file access");
+			}
+
+			const allowed = await compile(body, { restrictFileAccess: false });
+			expect(allowed.ok).toBe(true);
+		} finally {
+			fs.rmSync(secret, { force: true });
+		}
+	}, TEST_TIMEOUT);
+
+	it("keeps a normal diagram working under the restriction", async () => {
+		const svg = expectRendered(
+			await compile(block(`\\usetikzlibrary{calc}\n\\begin{tikzpicture}\\draw (0,0)--($(1,1)+(1,0)$);\\end{tikzpicture}`)),
+		);
+		expect(pathCount(svg)).toBeGreaterThan(0);
+	}, TEST_TIMEOUT);
+
 	it("treats a commented-out \\documentclass as a comment", async () => {
 		const svg = expectRendered(
 			await compile(

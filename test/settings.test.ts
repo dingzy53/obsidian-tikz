@@ -21,6 +21,13 @@ describe("mergeSettings", () => {
 		expect(mergeSettings({ allowShellEscape: true }).allowShellEscape).toBe(true);
 	});
 
+	it("restricts file access unless explicitly opted out", () => {
+		expect(DEFAULT_SETTINGS.restrictFileAccess).toBe(true);
+		expect(mergeSettings({}).restrictFileAccess).toBe(true);
+		expect(mergeSettings({ restrictFileAccess: "no" }).restrictFileAccess).toBe(true);
+		expect(mergeSettings({ restrictFileAccess: false }).restrictFileAccess).toBe(false);
+	});
+
 	it("rejects an unknown engine", () => {
 		expect(mergeSettings({ engine: "rm -rf" }).engine).toBe(DEFAULT_ENGINE);
 	});

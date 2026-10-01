@@ -409,13 +409,15 @@ export function describeResolution(
  * Extra directories are prepended to the *host's* `PATH` by a tiny constant
  * `sh` wrapper that reads them as positional parameters (never interpolated
  * into the script). Passing `--env=PATH=…` instead would replace the host
- * `PATH` with the sandbox's, hiding the very TeX install we came for.
+ * `PATH` with the sandbox's, hiding the very TeX install we came for. Other
+ * variables go through `--env`.
  */
 export function buildHostSpawn(
 	command: string,
 	args: string[],
 	cwd: string,
 	extraDirs: string[] = [],
+	env: Record<string, string> = {},
 ): { command: string; args: string[] } {
 	const dirs = [
 		...extraDirs.map((dir) => dir.trim()).filter((dir) => dir.length > 0),
@@ -427,6 +429,10 @@ export function buildHostSpawn(
 			"--host",
 			"--watch-bus",
 			`--directory=${cwd}`,
+			// The host process does not inherit our environment, so settings
+			// that travel as environment variables (e.g. `openin_any`) must be
+			// passed explicitly.
+			...Object.entries(env).map(([key, value]) => `--env=${key}=${value}`),
 			"--",
 			"sh",
 			"-c",

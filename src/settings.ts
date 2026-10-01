@@ -263,6 +263,20 @@ export class TikzSettingTab extends PluginSettingTab {
 					}
 				}),
 			);
+
+		new Setting(containerEl)
+			.setName("Restrict file access")
+			.setDesc(
+				"Runs TeX with openin_any=p, so a diagram cannot read files outside its build folder " +
+					"(for example \\input{~/.ssh/config}). The side effect: \\includegraphics and \\input " +
+					"with an absolute path stop working. Turn off only for vaults you trust.",
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.restrictFileAccess).onChange(async (value) => {
+					this.plugin.settings.restrictFileAccess = value;
+					await this.persist();
+				}),
+			);
 	}
 
 	private renderPerformanceSection(containerEl: HTMLElement): void {

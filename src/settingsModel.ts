@@ -27,6 +27,12 @@ export interface TikzSettings {
 	 * it on, opening a note can run arbitrary shell commands.
 	 */
 	allowShellEscape: boolean;
+	/**
+	 * Run TeX with `openin_any=p` so a block cannot read files outside its build
+	 * folder (`\input{~/.ssh/config}`). On by default; same reasoning as shell
+	 * escape: vault content is untrusted.
+	 */
+	restrictFileAccess: boolean;
 	compileTimeoutSeconds: number;
 	/** Diagrams compiled in parallel. 0 = automatic (see `resolveConcurrency`). */
 	maxConcurrentCompiles: number;
@@ -47,6 +53,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	extraPathDirs: [],
 	defaultPreamble: DEFAULT_PREAMBLE,
 	allowShellEscape: false,
+	restrictFileAccess: true,
 	compileTimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
 	maxConcurrentCompiles: 0,
 	colorAdaptation: "adaptive",
@@ -97,6 +104,8 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
 	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
 	merged.allowShellEscape = merged.allowShellEscape === true;
+	// Only an explicit `false` opts out; anything else keeps the safe default.
+	merged.restrictFileAccess = merged.restrictFileAccess !== false;
 	merged.enginePath = typeof merged.enginePath === "string" ? merged.enginePath : "";
 	merged.dvisvgmPath = typeof merged.dvisvgmPath === "string" ? merged.dvisvgmPath : "";
 

@@ -49,6 +49,19 @@ describe.skipIf(!posix)("compileTikz process handling", () => {
 		}
 	});
 
+	it("runs TeX with openin_any=p by default, and not when opted out", async () => {
+		const engine = script("env-engine", `echo "openin_any=[$openin_any]" >&2\nexit 1`);
+		const restricted = await compileTikz({ ...base, enginePath: engine, dvisvgmPath: okDvisvgm });
+		const open = await compileTikz({
+			...base,
+			enginePath: engine,
+			dvisvgmPath: okDvisvgm,
+			restrictFileAccess: false,
+		});
+		expect(restricted.ok || restricted.log).toContain("openin_any=[p]");
+		expect(open.ok || open.log).toContain("openin_any=[]");
+	});
+
 	it("kills a hung engine and reports a timeout", async () => {
 		const engine = script("hung-engine", "sleep 30");
 		const started = Date.now();

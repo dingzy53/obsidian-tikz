@@ -129,6 +129,12 @@ describe("buildHostSpawn", () => {
 		expect(args.some((arg) => arg.startsWith("--env="))).toBe(false);
 	});
 
+	it("passes extra environment variables explicitly, since the host does not inherit ours", () => {
+		const { args } = buildHostSpawn("latex", [], "/work", [], { openin_any: "p" });
+		const dashDash = args.indexOf("--");
+		expect(args.slice(0, dashDash)).toContain("--env=openin_any=p");
+	});
+
 	it("passes directories and the command as arguments, not as script text", () => {
 		const evil = "/tmp/$(touch pwned);x";
 		const { args } = buildHostSpawn("latex", ["a b", "; rm -rf /"], "/work", [evil]);
