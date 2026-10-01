@@ -88,7 +88,9 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	merged.enginePath = typeof merged.enginePath === "string" ? merged.enginePath : "";
 	merged.dvisvgmPath = typeof merged.dvisvgmPath === "string" ? merged.dvisvgmPath : "";
 
-	if (ADAPTATION_MODES.includes(merged.colorAdaptation)) {
+	// Judge the *stored* value: `merged` already carries the default, which is
+	// always valid and would mask the legacy toggle below.
+	if (raw.colorAdaptation !== undefined && ADAPTATION_MODES.includes(raw.colorAdaptation)) {
 		// Already migrated; nothing to do.
 	} else if (raw.invertColorsInDarkMode === false) {
 		// The old toggle off meant "do not touch my colours".

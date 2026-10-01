@@ -42,6 +42,7 @@ describe("mergeSettings", () => {
 	});
 
 	it("migrates the pre-1.1 invertColorsInDarkMode toggle", () => {
+		expect(mergeSettings({ invertColorsInDarkMode: false }).colorAdaptation).toBe("off");
 		expect(mergeSettings({ invertColorsInDarkMode: true }).colorAdaptation).toBe("adaptive");
 		expect(mergeSettings({ colorAdaptation: "light-canvas" }).colorAdaptation).toBe("light-canvas");
 	});
