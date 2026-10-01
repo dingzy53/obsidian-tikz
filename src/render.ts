@@ -185,13 +185,44 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		// Namespacing ids per diagram keeps multiple inline diagrams from
 		// resolving each other's glyph references.
 		const prefix = `tikz-${this.cacheKey.slice(0, 8)}-`;
-		const prepared = prepareSvgForDisplay(svg, prefix, settings.colorAdaptation, isDark);
+
+		let element: Element;
+		try {
+			const prepared = prepareSvgForDisplay(svg, prefix, settings.colorAdaptation, isDark);
+			// Parse as XML and adopt the nodes, instead of `innerHTML`: the HTML
+			// parser and an XML serialiser can disagree about the same markup,
+			// which is the classic way a sanitised SVG turns hostile again.
+			const doc = new DOMParser().parseFromString(prepared, "image/svg+xml");
+			if (doc.getElementsByTagName("parsererror").length > 0) {
+				throw new Error("the sanitised SVG is not well-formed XML");
+			}
+			element = document.importNode(doc.documentElement, true);
+		} catch (error) {
+			this.showDisplayError(error);
+			return;
+		}
+
 		this.container.classList.toggle(
 			"tikz-light-canvas",
 			settings.colorAdaptation === "light-canvas" && isDark,
 		);
 		this.container.empty();
-		this.container.innerHTML = prepared;
+		this.container.appendChild(element);
+	}
+
+	/** The diagram compiled, but its SVG was rejected before display. */
+	private showDisplayError(error: unknown): void {
+		this.container.empty();
+		this.container.classList.remove("tikz-light-canvas");
+		const box = this.container.createDiv({ cls: "tikz-error" });
+		box.createDiv({
+			cls: "tikz-error-summary",
+			text: "TikZ diagram could not be displayed",
+		});
+		box.createDiv({
+			cls: "tikz-error-hint",
+			text: error instanceof Error ? error.message : String(error),
+		});
 	}
 
 	private showError(failure: CompileFailure): void {
