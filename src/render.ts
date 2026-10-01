@@ -118,6 +118,8 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	private rawSvg: string | null = null;
 	private cacheKey = "";
 	private loadingTimer: number | null = null;
+	/** {@link displayKey} of what is currently on screen. */
+	private shownKey = "";
 
 	constructor(
 		containerEl: HTMLElement,
@@ -141,9 +143,22 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		this.onUnload();
 	}
 
-	/** Re-runs display-time post-processing from the already-compiled SVG. */
+	/**
+	 * Re-runs display-time post-processing from the already-compiled SVG.
+	 *
+	 * `css-change` fires for far more than theme switches (any snippet or
+	 * accent change), and the SVGO pass is not free, so this is a no-op unless
+	 * something the output depends on actually changed.
+	 */
 	redraw(): void {
-		if (this.rawSvg) this.inject(this.rawSvg);
+		if (!this.rawSvg) return;
+		if (this.displayKey(this.deps.getSettings()) === this.shownKey) return;
+		this.inject(this.rawSvg);
+	}
+
+	/** Everything display-time processing depends on besides the SVG itself. */
+	private displayKey(settings: TikzSettings): string {
+		return `${settings.colorAdaptation}|${isDarkTheme()}`;
 	}
 
 	private stopLoadingTimer(): void {
@@ -207,6 +222,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		// Namespacing ids per diagram keeps multiple inline diagrams from
 		// resolving each other's glyph references.
 		const prefix = `tikz-${this.cacheKey.slice(0, 8)}-`;
+		this.shownKey = this.displayKey(settings);
 
 		let element: Element;
 		try {
