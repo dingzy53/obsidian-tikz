@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	BinaryNotFoundError,
 	buildHostSpawn,
+	createTtlMemo,
 	describeResolution,
 	isExecutable,
 	isFlatpak,
@@ -147,5 +148,42 @@ describe("buildHostSpawn", () => {
 		}).trim();
 		expect(out.startsWith("/first-extra:")).toBe(true);
 		expect(out.endsWith(":/usr/bin:/bin")).toBe(true);
+	});
+});
+
+describe("createTtlMemo", () => {
+	it("reuses a value until it expires, then recomputes", () => {
+		let clock = 0;
+		let calls = 0;
+		const memo = createTtlMemo<number>(100, () => clock);
+		const compute = (): number => ++calls;
+
+		expect(memo.get("k", compute)).toBe(1);
+		clock = 99;
+		expect(memo.get("k", compute)).toBe(1);
+		clock = 100;
+		expect(memo.get("k", compute)).toBe(2);
+	});
+
+	it("keys entries independently and caches falsy results", () => {
+		let calls = 0;
+		const memo = createTtlMemo<boolean>(100, () => 0);
+		const compute = (): boolean => {
+			calls++;
+			return false;
+		};
+		memo.get("a", compute);
+		memo.get("a", compute);
+		memo.get("b", compute);
+		expect(calls).toBe(2);
+	});
+
+	it("clear() drops everything", () => {
+		let calls = 0;
+		const memo = createTtlMemo<number>(100, () => 0);
+		memo.get("a", () => ++calls);
+		memo.clear();
+		memo.get("a", () => ++calls);
+		expect(calls).toBe(2);
 	});
 });
