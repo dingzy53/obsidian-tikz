@@ -110,3 +110,20 @@ See [AGENTS.md](AGENTS.md) for architectural constraints and contribution rules.
 ## License
 
 [MIT](LICENSE). Scaffolding based on [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax).
+
+## Showcase
+
+Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right) with automatic adaptive contrast:
+
+### Mathematics & Geometry
+![Mathematics & Geometry](examples/showcase-1.png)
+
+### Circuits & Scientific Plots
+![Circuits & Scientific Plots](examples/showcase-2.png)
+
+### 3D Coordinates & Diagrams
+![3D Coordinates & Diagrams](examples/showcase-3.png)
+
+### Automata & Theme Adaptation
+![Automata & Theme Adaptation](examples/showcase-4.png)
+
