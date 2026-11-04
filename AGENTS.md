@@ -12,6 +12,18 @@ MiKTeX) instead of a browser WASM engine. It is a heavy rewrite forked from
 the settings-tab scaffolding, dark-mode SVG remap, and the `tikz` fence tag
 are reused; the entire rendering backend is new.
 
+## Pending for the next release
+
+Apply these together with the next version bump, then delete this section.
+Until a release ships them, `manifest.json` on `main` must stay identical to
+the latest release's manifest, because the community directory compares the
+two. Do not publish a release only for these changes.
+
+- `manifest.json`: set `"name": "Native TikZ"` and `"author": "Ding Zheng Yuan"`,
+  and add `"authorUrl": "https://github.com/dingzy53"` after `author`.
+- `README.md`, Installation: change **TikZ** to **Native TikZ** in "search for
+  **TikZ**" and "enable **TikZ**".
+
 ## Commands
 
 - `npm install`

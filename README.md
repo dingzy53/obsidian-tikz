@@ -33,7 +33,7 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 **From the community directory** (recommended)
 
 1. Open **Settings → Community plugins** and turn on community plugins if asked.
-2. Select **Browse**, search for **Native TikZ**, then select **Install** and **Enable**.
+2. Select **Browse**, search for **TikZ**, then select **Install** and **Enable**.
 
 You can also open the plugin's page: [community.obsidian.md/plugins/tikz](https://community.obsidian.md/plugins/tikz).
 
@@ -42,7 +42,7 @@ You can also open the plugin's page: [community.obsidian.md/plugins/tikz](https:
 1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/dingzy53/obsidian-tikz/releases/latest).
 2. In **Settings → Community plugins**, select the folder icon next to **Installed plugins**. This opens `<vault>/.obsidian/plugins/`.
 3. Create a folder named `tikz` there and put the three files in it.
-4. Select the reload icon next to **Installed plugins**, then enable **Native TikZ**.
+4. Select the reload icon next to **Installed plugins**, then enable **TikZ**.
 
 **Beta versions:** install [BRAT](https://github.com/TfTHacker/obsidian42-brat) and add `dingzy53/obsidian-tikz`.
 
