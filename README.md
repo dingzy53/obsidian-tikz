@@ -1,4 +1,4 @@
-# TikZ (obsidian-tikz)
+# Native TikZ
 
 An Obsidian desktop plugin that renders ` ```tikz ` code blocks by shelling out to a **locally installed TeX distribution** (TeX Live, MacTeX, or MiKTeX) instead of a browser WASM engine.
 
@@ -20,14 +20,14 @@ Forked and rewritten from [`artisticat1/obsidian-tikzjax`](https://github.com/ar
 
 **From the community directory**
 
-Open *Settings → Community plugins → Browse*, search for **TikZ**, then install and enable it.
+Open *Settings → Community plugins → Browse*, search for **Native TikZ**, then install and enable it.
 
 **From a release**
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [GitHub Release](https://github.com/dingzy53/obsidian-tikz/releases).
 2. Create a folder named `<vault>/.obsidian/plugins/tikz/` in your vault.
 3. Place the downloaded files into that folder.
-4. Reload Obsidian and enable **TikZ** in Settings → Community plugins.
+4. Reload Obsidian and enable **Native TikZ** in Settings → Community plugins.
 
 ## Usage
 
