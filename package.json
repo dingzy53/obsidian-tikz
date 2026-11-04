@@ -18,7 +18,8 @@
 		"tikz",
 		"latex"
 	],
-	"author": "ding",
+	"author": "Ding Zheng Yuan",
+	"repository": { "type": "git", "url": "git+https://github.com/dingzy53/obsidian-tikz.git" },
 	"license": "MIT",
 	"dependencies": {
 		"svgo": "^3.3.2"

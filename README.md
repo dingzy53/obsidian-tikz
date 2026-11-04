@@ -18,6 +18,12 @@ Forked and rewritten from [`artisticat1/obsidian-tikzjax`](https://github.com/ar
 
 ## Installation
 
+**From the community directory**
+
+Open *Settings → Community plugins → Browse*, search for **TikZ**, then install and enable it.
+
+**From a release**
+
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [GitHub Release](https://github.com/dingzy53/obsidian-tikz/releases).
 2. Create a folder named `<vault>/.obsidian/plugins/tikz/` in your vault.
 3. Place the downloaded files into that folder.
@@ -109,7 +115,9 @@ See [AGENTS.md](AGENTS.md) for architectural constraints and contribution rules.
 
 ## License
 
-[MIT](LICENSE). Scaffolding based on [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax).
+[MIT](LICENSE) © 2026 Ding Zheng Yuan.
+
+This plugin started as a fork of [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax) (MIT, © 2021–2023 artisticat1). The settings scaffolding and the ` ```tikz ` code block tag come from it; the rendering engine was rewritten to use a local TeX installation. Both copyright notices are kept in [LICENSE](LICENSE).
 
 ## Showcase
 
