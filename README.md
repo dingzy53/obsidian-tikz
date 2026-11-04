@@ -1,8 +1,20 @@
 # Native TikZ
 
-An Obsidian desktop plugin that renders ` ```tikz ` code blocks by shelling out to a **locally installed TeX distribution** (TeX Live, MacTeX, or MiKTeX) instead of a browser WASM engine.
+[![Release](https://img.shields.io/github/v/release/dingzy53/obsidian-tikz)](https://github.com/dingzy53/obsidian-tikz/releases/latest)
+[![Downloads](https://img.shields.io/badge/dynamic/json?label=downloads&logo=obsidian&color=7c3aed&query=%24%5B%22tikz%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/tikz)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.13.1%2B-7c3aed?logo=obsidian)](https://obsidian.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Forked and rewritten from [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax): settings scaffolding and the ` ```tikz ` code block tag are preserved for backward compatibility, while the rendering engine is completely replaced with native TeX execution.
+Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **locally installed TeX distribution** (TeX Live, MacTeX or MiKTeX) instead of a browser WASM engine. A rewrite of [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax), see [License](#license).
+
+![Mathematics & Geometry](examples/showcase-1.png)
+
+## Features
+
+- Full TikZ and any LaTeX package, compiled by your own TeX installation.
+- The real compiler log when a diagram fails, and a timeout instead of an endless spinner.
+- Colours adapted for dark themes.
+- A render cache inside the plugin folder. Nothing is written into your notes' folders.
 
 ## Requirements
 
@@ -18,16 +30,23 @@ Forked and rewritten from [`artisticat1/obsidian-tikzjax`](https://github.com/ar
 
 ## Installation
 
-**From the community directory**
+**From the community directory** (recommended)
 
-Open *Settings → Community plugins → Browse*, search for **Native TikZ**, then install and enable it.
+1. Open **Settings → Community plugins** and turn on community plugins if asked.
+2. Select **Browse**, search for **Native TikZ**, then select **Install** and **Enable**.
 
-**From a release**
+You can also open the plugin's page: [community.obsidian.md/plugins/tikz](https://community.obsidian.md/plugins/tikz).
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [GitHub Release](https://github.com/dingzy53/obsidian-tikz/releases).
-2. Create a folder named `<vault>/.obsidian/plugins/tikz/` in your vault.
-3. Place the downloaded files into that folder.
-4. Reload Obsidian and enable **Native TikZ** in Settings → Community plugins.
+**Manually**
+
+1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/dingzy53/obsidian-tikz/releases/latest).
+2. In **Settings → Community plugins**, select the folder icon next to **Installed plugins**. This opens `<vault>/.obsidian/plugins/`.
+3. Create a folder named `tikz` there and put the three files in it.
+4. Select the reload icon next to **Installed plugins**, then enable **Native TikZ**.
+
+**Beta versions:** install [BRAT](https://github.com/TfTHacker/obsidian42-brat) and add `dingzy53/obsidian-tikz`.
+
+**Update or remove:** select **Check for updates** or **Uninstall** in **Settings → Community plugins**.
 
 ## Usage
 
@@ -59,6 +78,19 @@ Bare TikZ snippets and packages loaded inline are also accepted:
 - **Render cache**: Compiled diagrams (`<hash>.svg`) are saved in `<vault>/.obsidian/plugins/tikz/cache/` (hidden inside the plugin directory; zero vault pollution). Failed compiles are not cached; the error block shows the live compiler log. When the entry limit is reached, the least recently *used* diagrams are dropped first.
 - **Compile scratch files**: Temporary TeX build files (`.tex`, `.dvi`, `.log`) live in your OS temp folder (`os.tmpdir()/obsidian-tikz/`, or `~/.cache/obsidian-tikz/` on Flatpak) and are cleaned up immediately upon completion.
 
+## Showcase
+
+Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right) with automatic adaptive contrast:
+
+### Circuits & Scientific Plots
+![Circuits & Scientific Plots](examples/showcase-2.png)
+
+### 3D Coordinates & Diagrams
+![3D Coordinates & Diagrams](examples/showcase-3.png)
+
+### Automata & Theme Adaptation
+![Automata & Theme Adaptation](examples/showcase-4.png)
+
 ## Settings
 
 | Setting | Description | Default |
@@ -77,7 +109,7 @@ Bare TikZ snippets and packages loaded inline are also accepted:
 > [!NOTE]
 > On macOS, GUI apps launched from Finder or the Dock do not inherit your shell's `PATH`. If binaries show as "not found", click **Detect automatically** or set the path manually (e.g. `/Library/TeX/texbin`).
 
-## Dark Mode Customization
+## Dark mode
 
 - **Adaptive** (default): Automatically mirrors colour lightness while maintaining a 3:1 contrast floor, ensuring labels and shapes remain legible against dark themes.
 - **Light canvas**: Keeps original colours untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
@@ -94,7 +126,14 @@ To force a diagram to look identical in both light and dark themes, give it a ba
 \end{tikzpicture}
 ```
 
-## Security
+## Privacy and security
+
+- **Running programs:** the plugin starts only your TeX engine and `dvisvgm`, with an argument list and never through a shell. Under Flatpak it runs them on the host with `flatpak-spawn --host`.
+- **Files outside the vault:** compile scratch files go to the system temp folder (`~/.cache/obsidian-tikz/` under Flatpak) and are deleted after each compile. The render cache stays in the plugin folder.
+- **Network:** none. If MiKTeX is set to install missing packages, MiKTeX itself may download them.
+- **Clipboard:** written only by the **Copy log** button on a failed diagram.
+
+**Security**
 
 - **Shell escape is off by default**: Vault content is untrusted; `-shell-escape` is never enabled unless explicitly turned on by the user.
 - **Direct argv execution**: Subprocesses are spawned with an argv array (`spawn`/`execFile`), never interpolated shell strings.
@@ -118,20 +157,3 @@ See [AGENTS.md](AGENTS.md) for architectural constraints and contribution rules.
 [MIT](LICENSE) © 2026 Ding Zheng Yuan.
 
 This plugin started as a fork of [`artisticat1/obsidian-tikzjax`](https://github.com/artisticat1/obsidian-tikzjax) (MIT, © 2021–2023 artisticat1). The settings scaffolding and the ` ```tikz ` code block tag come from it; the rendering engine was rewritten to use a local TeX installation. Both copyright notices are kept in [LICENSE](LICENSE).
-
-## Showcase
-
-Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right) with automatic adaptive contrast:
-
-### Mathematics & Geometry
-![Mathematics & Geometry](examples/showcase-1.png)
-
-### Circuits & Scientific Plots
-![Circuits & Scientific Plots](examples/showcase-2.png)
-
-### 3D Coordinates & Diagrams
-![3D Coordinates & Diagrams](examples/showcase-3.png)
-
-### Automata & Theme Adaptation
-![Automata & Theme Adaptation](examples/showcase-4.png)
-
