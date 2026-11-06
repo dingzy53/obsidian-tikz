@@ -17,6 +17,17 @@ describe("mergeSettings", () => {
 		expect(mergeSettings(undefined)).toEqual(DEFAULT_SETTINGS);
 	});
 
+	it("enables click-to-enlarge by default and keeps only boolean values", () => {
+		expect(DEFAULT_SETTINGS.zoomOnClick).toBe(true);
+		expect(mergeSettings({}).zoomOnClick).toBe(true);
+		expect(mergeSettings({ zoomOnClick: false }).zoomOnClick).toBe(false);
+		expect(mergeSettings({ zoomOnClick: "no" }).zoomOnClick).toBe(true);
+		expect(mergeSettings({ zoomOnClick: 0 }).zoomOnClick).toBe(true);
+		expect(mergeSettings(mergeSettings({ zoomOnClick: false })).zoomOnClick).toBe(false);
+		expect(readSettingValue(DEFAULT_SETTINGS, "zoomOnClick")).toBe(true);
+		expect(applySettingChange(DEFAULT_SETTINGS, "zoomOnClick", false).zoomOnClick).toBe(false);
+	});
+
 	it("never leaves shell escape on unless it is exactly true", () => {
 		expect(mergeSettings({ allowShellEscape: "yes" }).allowShellEscape).toBe(false);
 		expect(mergeSettings({ allowShellEscape: 1 }).allowShellEscape).toBe(false);

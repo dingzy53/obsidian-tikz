@@ -14,6 +14,7 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 - Full TikZ and any LaTeX package, compiled by your own TeX installation.
 - The real compiler log when a diagram fails, and a timeout instead of an endless spinner.
 - Colours adapted for dark themes.
+- Click a diagram to open it in a zoomable viewer.
 - A render cache inside the plugin folder. Nothing is written into your notes' folders.
 
 ## Requirements
@@ -73,6 +74,17 @@ Bare TikZ snippets and packages loaded inline are also accepted:
 ```
 ````
 
+### Zooming
+
+Click a diagram, or select it with Tab and press Enter, to open it in a viewer. It opens fitted to the window, and you can:
+
+- zoom with the mouse wheel or a trackpad pinch, centred on the pointer;
+- drag to pan;
+- double-click to switch between fit and 2×;
+- press `+` / `-` to zoom, `0` to fit, `1` for actual size, and Esc to close.
+
+The viewer uses the already rendered SVG, so nothing is recompiled. Turn it off with **Click to enlarge diagrams**.
+
 ### Cache & Scratch Files
 
 - **Render cache**: Compiled diagrams (`<hash>.svg`) are saved in `<vault>/.obsidian/plugins/tikz/cache/` (hidden inside the plugin directory; zero vault pollution). Failed compiles are not cached; the error block shows the live compiler log. When the entry limit is reached, the least recently *used* diagrams are dropped first.
@@ -96,6 +108,7 @@ Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right
 | Setting | Description | Default |
 |---|---|---|
 | **Dark mode colours** | `Adaptive` (mirrors lightness with contrast floor), `Light canvas` (light panel), or `Off`. | `Adaptive` |
+| **Click to enlarge diagrams** | Clicking a diagram (or Enter on it) opens the zoomable viewer. | `true` |
 | **TeX engine** | `dvilualatex` (recommended), `latex`, `xelatex`, or `pdflatex`. | `dvilualatex` |
 | **Binary paths** | Custom path overrides for TeX engine and `dvisvgm`, with an **Auto-detect** button. | Auto (`PATH`) |
 | **Extra PATH** | Extra directories to append to `PATH` at runtime. | Empty |

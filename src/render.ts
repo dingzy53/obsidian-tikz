@@ -45,6 +45,11 @@ export interface RenderDeps {
 	openSettings(): void;
 	/** Opens a folder in the OS file manager. */
 	revealPath(path: string): void;
+	/**
+	 * Opens the zoomable viewer. `svg` is already sanitised by
+	 * `prepareSvgForDisplay` (AGENTS.md rule 7).
+	 */
+	openZoom(svg: string, lightCanvas: boolean): void;
 }
 
 export interface TikzRenderer {
@@ -120,6 +125,8 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	private loadingTimer: number | null = null;
 	/** {@link displayKey} of what is currently on screen. */
 	private shownKey = "";
+	/** True only while a diagram (not a spinner or an error) is on screen. */
+	private zoomable = false;
 
 	constructor(
 		containerEl: HTMLElement,
@@ -132,6 +139,25 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	}
 
 	onload(): void {
+		// Registered once on the container, which outlives every re-render;
+		// the handlers check `zoomable` so a spinner or an error never opens
+		// the viewer.
+		this.registerDomEvent(this.container, "click", (evt) => {
+			if (!this.canZoom()) return;
+			// In Live Preview a click on the widget would otherwise move the
+			// cursor into the code block and reveal its source.
+			evt.preventDefault();
+			evt.stopPropagation();
+			this.openZoom();
+		});
+		this.registerDomEvent(this.container, "keydown", (evt) => {
+			if (evt.key !== "Enter" && evt.key !== " ") return;
+			if (!this.canZoom() || evt.target !== this.container) return;
+			evt.preventDefault();
+			evt.stopPropagation();
+			this.openZoom();
+		});
+
 		// `render()` handles its own failures; this catch is the last line of
 		// defence so a bug can never leave the loading spinner running.
 		this.render().catch((error: unknown) => this.failUnexpectedly(error));
@@ -158,7 +184,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	/** Everything display-time processing depends on besides the SVG itself. */
 	private displayKey(settings: TikzSettings): string {
-		return `${settings.colorAdaptation}|${isDarkTheme()}`;
+		return `${settings.colorAdaptation}|${isDarkTheme()}|${settings.zoomOnClick}`;
 	}
 
 	private stopLoadingTimer(): void {
@@ -168,7 +194,53 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		}
 	}
 
+	private canZoom(): boolean {
+		return this.zoomable && this.rawSvg !== null && this.deps.getSettings().zoomOnClick;
+	}
+
+	/** Makes the container a button only while it shows a diagram and the setting is on. */
+	private setZoomable(zoomable: boolean): void {
+		this.zoomable = zoomable;
+		const on = zoomable && this.deps.getSettings().zoomOnClick;
+		this.container.toggleClass("tikz-zoomable", on);
+		if (on) {
+			this.container.setAttribute("role", "button");
+			this.container.setAttribute("tabindex", "0");
+			this.container.setAttribute("aria-label", "Open diagram viewer");
+		} else {
+			this.container.removeAttribute("role");
+			this.container.removeAttribute("tabindex");
+			this.container.removeAttribute("aria-label");
+		}
+	}
+
+	/**
+	 * Rebuilt from the raw SVG on every open, so the viewer follows the
+	 * current theme and colour setting. The id prefix differs from the inline
+	 * copy's because both are in the document while the viewer is open.
+	 */
+	private openZoom(): void {
+		if (!this.rawSvg) return;
+		const settings = this.deps.getSettings();
+		const isDark = isDarkTheme();
+		let prepared: string;
+		try {
+			prepared = prepareSvgForDisplay(
+				this.rawSvg,
+				`tikz-zoom-${this.cacheKey.slice(0, 8)}-`,
+				settings.colorAdaptation,
+				isDark,
+			);
+		} catch (error) {
+			console.error("[tikz] Could not prepare the diagram for the viewer.", error);
+			new Notice("Could not open the diagram viewer.");
+			return;
+		}
+		this.deps.openZoom(prepared, settings.colorAdaptation === "light-canvas" && isDark);
+	}
+
 	private showLoading(): void {
+		this.setZoomable(false);
 		this.container.empty();
 		const box = this.container.createDiv({ cls: "tikz-loading" });
 		const started = Date.now();
@@ -246,6 +318,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		);
 		this.container.empty();
 		this.container.appendChild(element);
+		this.setZoomable(true);
 	}
 
 	private failUnexpectedly(error: unknown): void {
@@ -257,6 +330,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	/** The diagram could not be shown (rejected SVG, I/O failure, internal error). */
 	private showDisplayError(error: unknown): void {
+		this.setZoomable(false);
 		this.container.empty();
 		this.container.classList.remove("tikz-light-canvas");
 		const box = this.container.createDiv({ cls: "tikz-error" });
@@ -271,6 +345,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	}
 
 	private showError(failure: CompileFailure): void {
+		this.setZoomable(false);
 		this.container.empty();
 		const box = this.container.createDiv({ cls: "tikz-error" });
 

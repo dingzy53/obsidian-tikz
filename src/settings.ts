@@ -50,6 +50,7 @@ export class TikzSettingTab extends PluginSettingTab {
 
 		switch (key) {
 			case "colorAdaptation":
+			case "zoomOnClick":
 				this.plugin.refreshAllDiagrams();
 				break;
 			case "engine":
@@ -96,6 +97,13 @@ export class TikzSettingTab extends PluginSettingTab {
 							off: "Off (leave colours alone)",
 						},
 					},
+				},
+				{
+					name: "Click to enlarge diagrams",
+					desc:
+						"Clicking a diagram, or pressing Enter on it, opens it in a viewer where you can zoom " +
+						"(wheel, pinch, + and −) and drag to pan.",
+					control: { type: "toggle", key: "zoomOnClick" },
 				},
 				{
 					name: "TeX engine",

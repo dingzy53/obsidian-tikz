@@ -38,6 +38,8 @@ export interface TikzSettings {
 	colorAdaptation: ColorAdaptation;
 	/** 0 = unlimited. */
 	maxCacheEntries: number;
+	/** Clicking a diagram (or Enter on it) opens the zoomable viewer. */
+	zoomOnClick: boolean;
 }
 
 export const DEFAULT_SETTINGS: TikzSettings = {
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	maxConcurrentCompiles: 0,
 	colorAdaptation: "adaptive",
 	maxCacheEntries: 500,
+	zoomOnClick: true,
 };
 
 const ADAPTATION_MODES: ColorAdaptation[] = ["adaptive", "light-canvas", "off"];
@@ -97,6 +100,7 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
 	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
 	merged.allowShellEscape = merged.allowShellEscape === true;
+	merged.zoomOnClick = typeof merged.zoomOnClick === "boolean" ? merged.zoomOnClick : DEFAULT_SETTINGS.zoomOnClick;
 	// Retired in #4: the "Restrict file access" toggle set `openin_any=p`, which
 	// is a no-op since TeX Live 2026 and broke luaotfload before that. Drop the
 	// stale key so it does not linger in `data.json`.

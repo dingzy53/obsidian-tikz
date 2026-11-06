@@ -4,6 +4,7 @@ import { DiagramCache } from "./cache";
 import { sweepScratchDirs } from "./compiler";
 import { registerTikzProcessor, type TikzRenderer } from "./render";
 import { DEFAULT_SETTINGS, mergeSettings, TikzSettingTab, type TikzSettings } from "./settings";
+import { DiagramZoomModal } from "./zoomModal";
 
 export default class TikzPlugin extends Plugin {
 	settings: TikzSettings = { ...DEFAULT_SETTINGS };
@@ -38,6 +39,7 @@ export default class TikzPlugin extends Plugin {
 			cache: this.cache,
 			openSettings: () => this.openSettings(),
 			revealPath: (target) => this.revealPath(target),
+			openZoom: (svg, lightCanvas) => new DiagramZoomModal(this.app, svg, lightCanvas).open(),
 		});
 
 		// `adaptive` colour handling depends on whether the theme is dark, so a

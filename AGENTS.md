@@ -76,6 +76,9 @@ src/settingsModel.ts     Settings schema, defaults, mergeSettings/validation
 src/limiter.ts           Bounded-concurrency queue for compiles (pure)
 src/render.ts            registerMarkdownCodeBlockProcessor handler,
                          loading state, error block, dark-mode + SVGO
+src/zoom.ts              Pure zoom/pan maths for the diagram viewer
+src/zoomModal.ts         Diagram viewer modal (zoom, pan, keyboard); adopts the
+                         sanitised SVG via DOMParser/importNode
 src/svg.ts               Pure SVG post-processing: dark-mode remap, allowlist
                          sanitising (SVGO tree plugin, fail-closed), id
                          namespacing, SVGO
