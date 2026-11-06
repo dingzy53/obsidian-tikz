@@ -20,7 +20,7 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 
 ## Requirements
 
-- **Obsidian Desktop** (Windows, macOS, Linux). Mobile is unsupported (no Node.js child processes).
+- **Obsidian Desktop** (Windows, macOS, Linux) to compile diagrams. Phones and tablets can display diagrams a desktop shared with them (see [Mobile](#mobile)) but cannot compile.
 - A TeX distribution with **`dvisvgm`** installed:
   - **Windows**: [MiKTeX](https://miktex.org/download) or [TeX Live](https://www.tug.org/texlive/windows.html)
   - **macOS**: [MacTeX](https://www.tug.org/mactex/) (or via Homebrew: `brew install --cask mactex-no-gui`)
@@ -35,7 +35,7 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 **From the community directory** (recommended)
 
 1. Open **Settings → Community plugins** and turn on community plugins if asked.
-2. Select **Browse**, search for **TikZ**, then select **Install** and **Enable**.
+2. Select **Browse**, search for **Native TikZ**, then select **Install** and **Enable**.
 
 You can also open the plugin's page: [community.obsidian.md/plugins/tikz](https://community.obsidian.md/plugins/tikz).
 
@@ -44,7 +44,7 @@ You can also open the plugin's page: [community.obsidian.md/plugins/tikz](https:
 1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/dingzy53/obsidian-tikz/releases/latest).
 2. In **Settings → Community plugins**, select the folder icon next to **Installed plugins**. This opens `<vault>/.obsidian/plugins/`.
 3. Create a folder named `tikz` there and put the three files in it.
-4. Select the reload icon next to **Installed plugins**, then enable **TikZ**.
+4. Select the reload icon next to **Installed plugins**, then enable **Native TikZ**.
 
 **Beta versions:** install [BRAT](https://github.com/TfTHacker/obsidian42-brat) and add `dingzy53/obsidian-tikz`.
 
@@ -90,10 +90,7 @@ The viewer uses the already rendered SVG, so nothing is recompiled. Turn it off 
 
 Phones and tablets cannot run TeX, so on mobile the plugin only **displays** diagrams that a desktop rendered and shared. Sharing is **off by default**, because it adds visible files to your vault.
 
-> [!NOTE]
-> Mobile support ships with the next release. Until then the plugin is still marked desktop-only in the community directory.
-
-1. On a desktop, turn on **Settings → TikZ → Mobile → Share diagrams with mobile**. The plugin creates the shared folder (`TikZ cache` by default) and fills it with one `<hash>.svg` per diagram in your notes, copying renders it already has.
+1. On a desktop, turn on **Settings → Native TikZ → Mobile → Share diagrams with mobile**. The plugin creates the shared folder (`TikZ cache` by default) and fills it with one `<hash>.svg` per diagram in your notes, copying renders it already has.
 2. Use **Render all for mobile** to compile the diagrams you have never opened on that desktop. New and edited diagrams are added as they render, and **Update shared diagrams now** (also run once at startup) removes files no note uses any more. Only files named `<64 hex>.svg` are ever deleted, so anything else you keep in the folder is safe.
 3. Let your sync service carry the folder to your phone, then install and enable the plugin there. Diagrams show up as soon as they sync, and anything not shared yet shows **"TikZ diagram not rendered yet"**. Clicking a diagram opens the zoomable viewer, with pinch to zoom.
 

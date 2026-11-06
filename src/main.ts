@@ -175,7 +175,7 @@ export default class TikzPlugin extends Plugin {
 			app.setting.open();
 			app.setting.openTabById(this.manifest.id);
 		} else {
-			new Notice("Open Settings → Community plugins → TikZ to change the options.");
+			new Notice("Open Settings → Native TikZ to change the options.");
 		}
 	}
 

@@ -13,33 +13,6 @@ is a read-only viewer of diagrams a desktop shared through the vault (opt-in). I
 the settings-tab scaffolding, dark-mode SVG remap, and the `tikz` fence tag
 are reused; the entire rendering backend is new.
 
-## Pending for the next release
-
-Apply these together with the next version bump, then delete this section.
-Until a release ships them, `manifest.json` on `main` must stay identical to
-the latest release's manifest, because the community directory compares the
-two. Do not publish a release only for these changes.
-
-- `manifest.json`: set `"name": "Native TikZ"` and `"author": "Ding Zheng Yuan"`,
-  and add `"authorUrl": "https://github.com/dingzy53"` after `author`.
-- `README.md`, Installation: change **TikZ** to **Native TikZ** in "search for
-  **TikZ**" and "enable **TikZ**".
-- `manifest.json`: set `"isDesktopOnly": false` (mobile viewer, #3), and in
-  `README.md` drop the "desktop only" wording from Requirements/Installation.
-  `npm run lint:review` must report nothing, and the release PR must carry
-  this note, because the submission requirements say a plugin that uses
-  Node.js "must set `isDesktopOnly` to `true`":
-
-  > `isDesktopOnly` is `false` because the plugin works on phones as a
-  > read-only viewer: they display SVGs that a desktop rendered into an opt-in
-  > shared vault folder, and never compile. Node.js is used only on desktop, to
-  > run the local TeX compiler. It is loaded in one function, `loadNodeApi()`
-  > in `src/desktop.ts`, through `require()` guarded by `Platform.isDesktop`,
-  > and `main.ts` imports that module only when `Platform.isDesktop` is true.
-  > `obsidianmd/no-nodejs-modules` passes with `isDesktopOnly: false`, and a
-  > test runs the bundle with every Node module blocked, as on a phone and
-  > under mobile emulation.
-
 ## Commands
 
 - `npm install`

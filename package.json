@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-tikz",
-	"version": "1.1.1",
+	"version": "1.1.2",
 	"description": "Obsidian desktop plugin: render TikZ code blocks with a local TeX installation.",
 	"main": "main.js",
 	"scripts": {
@@ -20,7 +20,10 @@
 		"latex"
 	],
 	"author": "Ding Zheng Yuan",
-	"repository": { "type": "git", "url": "git+https://github.com/dingzy53/obsidian-tikz.git" },
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dingzy53/obsidian-tikz.git"
+	},
 	"license": "MIT",
 	"dependencies": {
 		"svgo": "^3.3.2"
