@@ -4,6 +4,9 @@ export default defineConfig({
 	test: {
 		environment: "node",
 		include: ["test/**/*.test.ts"],
+		// The desktop modules reach Node through `nodeApi()` (AGENTS.md rule 1);
+		// tests provide the real modules, as `desktop.ts` does in Obsidian.
+		setupFiles: ["test/setup/nodeApi.ts"],
 		// The default worker-thread pool is blocked in some sandboxed/CI
 		// environments; child processes work everywhere.
 		pool: "forks",

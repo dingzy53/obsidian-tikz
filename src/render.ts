@@ -27,12 +27,17 @@ export const CODE_BLOCK_LANGUAGE = "tikz";
  * Obsidian tags `<body>` with `theme-dark` / `theme-light`, and fires
  * `css-change` when that flips (including on a mid-session theme switch).
  *
- * Guarded because a popped-out window or an unusual host may not expose
- * `document.body`; a failure here must never cost the user their diagram.
+ * Read from the diagram's own window (`el.doc`), never `activeDocument`: when
+ * the theme is switched in Obsidian 1.15's separate Settings window, that is
+ * the active one, and its class flips before the note window's, so
+ * `css-change` would redraw every diagram for the old theme.
+ *
+ * Guarded because an unusual host may not expose `body`; a failure here must
+ * never cost the user their diagram.
  */
-export function isDarkTheme(): boolean {
+export function isDarkTheme(el: Node): boolean {
 	try {
-		return activeDocument.body.classList.contains("theme-dark");
+		return el.doc.body.classList.contains("theme-dark");
 	} catch {
 		return false;
 	}
@@ -212,7 +217,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	/** Everything display-time processing depends on besides the SVG itself. */
 	private displayKey(settings: TikzSettings): string {
-		return `${settings.colorAdaptation}|${isDarkTheme()}|${settings.zoomOnClick}`;
+		return `${settings.colorAdaptation}|${isDarkTheme(this.container)}|${settings.zoomOnClick}`;
 	}
 
 	private stopLoadingTimer(): void {
@@ -250,7 +255,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	private openZoom(): void {
 		if (!this.rawSvg) return;
 		const settings = this.deps.getSettings();
-		const isDark = isDarkTheme();
+		const isDark = isDarkTheme(this.container);
 		let prepared: string;
 		try {
 			prepared = prepareSvgForDisplay(
@@ -381,7 +386,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	private inject(svg: string): void {
 		const settings = this.deps.getSettings();
-		const isDark = isDarkTheme();
+		const isDark = isDarkTheme(this.container);
 		// Namespacing ids per diagram keeps multiple inline diagrams from
 		// resolving each other's glyph references.
 		const prefix = `tikz-${this.cacheKey.slice(0, 8)}-`;
@@ -397,7 +402,8 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			if (doc.getElementsByTagName("parsererror").length > 0) {
 				throw new Error("the sanitised SVG is not well-formed XML");
 			}
-			element = activeDocument.importNode(doc.documentElement, true);
+			// The diagram's own window (`doc`), which may be a popout.
+			element = this.container.doc.importNode(doc.documentElement, true);
 		} catch (error) {
 			this.showDisplayError(error);
 			return;

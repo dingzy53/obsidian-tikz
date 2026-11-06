@@ -1,18 +1,28 @@
 /**
- * Everything that needs Node or Electron, behind one door.
+ * Everything that needs Node or Electron, behind one door (AGENTS.md rule 1).
  *
- * Mobile has neither (the bundle's top-level `require("node:fs")` would throw
- * and the plugin would fail to load), so `main.ts` loads this module only on
- * desktop, with a dynamic `import()`. esbuild then wraps it, and every module
- * only it reaches, in a lazy `__esm` initialiser: the `require` calls run on
- * first import, never at bundle load. Verified on the built `main.js`, and
- * enforced by the `no-restricted-imports` rule in `eslint.config.mjs` (only
- * this file may import `./cache` or `./compiler`) and `test/mobileLoad.test.ts`.
+ * Mobile has neither: requiring a Node module there throws, and under
+ * Obsidian's mobile emulation it yields `null`. Two layers keep Node off that
+ * path:
+ *
+ * 1. `main.ts` imports this module only when `Platform.isDesktop`, with a
+ *    dynamic `import()` that esbuild turns into a lazy initialiser, so on
+ *    mobile neither this file nor the compiler and cache modules it reaches
+ *    are ever evaluated.
+ * 2. Node itself is loaded in exactly one place, {@link loadNodeApi}, whose
+ *    first statement is the `Platform.isDesktop` guard that Obsidian's review
+ *    lint (`obsidianmd/no-nodejs-modules`) recognises. Every other module gets
+ *    the modules through `nodeApi()` and imports Node only as types.
+ *
+ * `require()`, not `import()`: esbuild leaves `import("node:fs")` as a native
+ * dynamic import, which fails in Obsidian's renderer ("Failed to fetch
+ * dynamically imported module"), while `require` goes through the plugin
+ * loader's own `require`.
+ *
+ * Enforced by `eslint.config.mjs` and `test/mobileLoad.test.ts`.
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
-import { FileSystemAdapter, Notice } from "obsidian";
+import { FileSystemAdapter, Notice, Platform } from "obsidian";
 import type { App, PluginManifest } from "obsidian";
 import { computeCacheKey, DiagramCache, type CacheKeyInput } from "./cache";
 import {
@@ -24,6 +34,7 @@ import {
 	type CompileOptions,
 	type CompileResult,
 } from "./compiler";
+import { nodeApi, provideNodeApi, type NodeApi } from "./nodeApi";
 
 export interface DesktopServices {
 	/** Absolute path of this plugin's own folder. */
@@ -42,6 +53,25 @@ export interface DesktopServices {
 	revealPath(target: string): void;
 }
 
+/** The one place Node.js is loaded (see the file comment). */
+function loadNodeApi(): NodeApi {
+	if (!Platform.isDesktop) {
+		throw new Error("Node.js APIs are only available in the desktop app.");
+	}
+	/* eslint-disable @typescript-eslint/no-require-imports -- a require() guarded by Platform.isDesktop is how Obsidian's review lint wants Node loaded; import() fails in the renderer */
+	const api: NodeApi = {
+		childProcess: require("node:child_process") as NodeApi["childProcess"],
+		crypto: require("node:crypto") as NodeApi["crypto"],
+		fs: require("node:fs") as NodeApi["fs"],
+		fsp: require("node:fs/promises") as NodeApi["fsp"],
+		os: require("node:os") as NodeApi["os"],
+		path: require("node:path") as NodeApi["path"],
+		timers: require("node:timers") as NodeApi["timers"],
+	};
+	/* eslint-enable @typescript-eslint/no-require-imports -- end of the guarded require() block */
+	return api;
+}
+
 /**
  * The plugin folder is where the local cache lives (AGENTS.md rule 2).
  * `manifest.dir` is vault-relative, so it is joined with the vault's
@@ -51,13 +81,14 @@ function resolvePluginDir(app: App, manifest: PluginManifest): string {
 	const adapter = app.vault.adapter;
 	const relative = manifest.dir ?? `${app.vault.configDir}/plugins/${manifest.id}`;
 	if (adapter instanceof FileSystemAdapter) {
-		return path.join(adapter.getBasePath(), relative);
+		return nodeApi().path.join(adapter.getBasePath(), relative);
 	}
 	console.warn("[tikz] Unexpected vault adapter; falling back to the relative plugin path.");
 	return relative;
 }
 
 function revealPath(target: string): void {
+	if (!Platform.isDesktop) return;
 	try {
 		// `electron` only exists in the desktop host, so require it lazily and
 		// defensively: a top-level import would turn any resolution failure
@@ -76,6 +107,9 @@ export async function createDesktopServices(
 	manifest: PluginManifest,
 	maxCacheEntries: number,
 ): Promise<DesktopServices> {
+	// First: everything below, and every service returned, may use Node.
+	provideNodeApi(loadNodeApi());
+	const { os, path } = nodeApi();
 	const pluginDir = resolvePluginDir(app, manifest);
 	const cache = new DiagramCache(path.join(pluginDir, "cache"), maxCacheEntries);
 	await cache.ensureDir().catch((error: unknown) => {

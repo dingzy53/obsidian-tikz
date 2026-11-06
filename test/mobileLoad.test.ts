@@ -11,8 +11,14 @@
  * sanitiser in the bundle.
  */
 
+import * as childProcess from "node:child_process";
+import * as nodeCrypto from "node:crypto";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
+import * as timers from "node:timers";
 import * as vm from "node:vm";
 import esbuild from "esbuild";
 import { describe, expect, it } from "vitest";
@@ -34,6 +40,16 @@ async function buildBundle(): Promise<string> {
 	return file.text;
 }
 
+/** The document every fake element belongs to (`el.doc`), and the VM's `document`. */
+const fakeDocument = {
+	importNode: (node: { markup: string }): FakeElement => {
+		const el = new FakeElement({ cls: "imported-svg" });
+		el.imported = node.markup;
+		return el;
+	},
+	body: { classList: { contains: (): boolean => false } },
+};
+
 // --- A minimal DOM stand-in -------------------------------------------------
 
 class FakeElement {
@@ -43,6 +59,11 @@ class FakeElement {
 	text = "";
 	imported: string | null = null;
 	listeners: Record<string, (evt: unknown) => void> = {};
+
+	/** Obsidian's `Node.doc`: the element's own window document. */
+	get doc(): typeof fakeDocument {
+		return fakeDocument;
+	}
 
 	constructor(options?: { cls?: string; text?: string }) {
 		if (options?.cls) for (const cls of options.cls.split(" ")) this.classes.add(cls);
@@ -194,7 +215,12 @@ function createHarness(platform: PlatformFlags): Harness {
 		Setting: class {},
 		TFile,
 		TFolder,
-		FileSystemAdapter: class {},
+		FileSystemAdapter: class {
+			constructor(private readonly basePath: string) {}
+			getBasePath(): string {
+				return this.basePath;
+			}
+		},
 		Platform: platform,
 		normalizePath: (p: string) => p.replace(/\/{2,}/g, "/").replace(/^\/|\/$/g, ""),
 		setIcon: () => undefined,
@@ -203,13 +229,15 @@ function createHarness(platform: PlatformFlags): Harness {
 	return { obsidian, processors, files, notices };
 }
 
-function createApp(harness: Harness): unknown {
-	const { TFile, TFolder } = harness.obsidian as {
+function createApp(harness: Harness, vaultPath = "/nonexistent-vault"): unknown {
+	const { TFile, TFolder, FileSystemAdapter } = harness.obsidian as {
 		TFile: new (path: string) => { path: string };
 		TFolder: new (path: string) => { path: string; children: unknown[] };
+		FileSystemAdapter: new (basePath: string) => unknown;
 	};
 	return {
 		vault: {
+			adapter: new FileSystemAdapter(vaultPath),
 			configDir: ".obsidian",
 			getFileByPath: (p: string) => (harness.files.has(p) ? new TFile(p) : null),
 			getFolderByPath: (p: string) => {
@@ -231,8 +259,15 @@ function createApp(harness: Harness): unknown {
 	};
 }
 
-/** Loads the bundle in a VM; returns what it exported and every module it asked for. */
-function loadBundle(code: string, harness: Harness): { Plugin: new (app: unknown, manifest: unknown) => unknown; requested: string[] } {
+/**
+ * Loads the bundle in a VM; returns what it exported and every module it asked
+ * for. Without `nodeModules` (a phone) any module but `obsidian` throws.
+ */
+function loadBundle(
+	code: string,
+	harness: Harness,
+	nodeModules?: Record<string, unknown>,
+): { Plugin: new (app: unknown, manifest: unknown) => unknown; requested: string[] } {
 	const requested: string[] = [];
 	const module = { exports: {} as Record<string, unknown> };
 	const timers = {
@@ -246,20 +281,14 @@ function loadBundle(code: string, harness: Harness): { Plugin: new (app: unknown
 			return { getElementsByTagName: () => [], documentElement: { markup } };
 		}
 	}
-	const document = {
-		importNode: (node: { markup: string }) => {
-			const el = new FakeElement({ cls: "imported-svg" });
-			el.imported = node.markup;
-			return el;
-		},
-		body: { classList: { contains: () => false } },
-	};
+	const document = fakeDocument;
 	const context = vm.createContext({
 		module,
 		exports: module.exports,
 		require: (name: string) => {
 			requested.push(name);
 			if (name === "obsidian") return harness.obsidian;
+			if (nodeModules && name in nodeModules) return nodeModules[name];
 			throw new Error(`Cannot find module '${name}' (mobile has no Node)`);
 		},
 		console,
@@ -394,5 +423,73 @@ describe("mobile load path (no Node)", () => {
 		// "Delete shared diagrams" shows because the folder holds a file.
 		expect(mobileRows).toEqual(["Diagrams on this device", "Shared folder", "Shared diagrams", "Delete shared diagrams"]);
 		expect(nodeRequests(requested)).toEqual([]);
+	}, 60_000);
+});
+
+/** Everything `loadNodeApi()` in `desktop.ts` requires, and nothing else. */
+const NODE_MODULES = [
+	"node:child_process",
+	"node:crypto",
+	"node:fs",
+	"node:fs/promises",
+	"node:os",
+	"node:path",
+	"node:timers",
+];
+
+describe("Node.js loading (AGENTS.md rule 1)", () => {
+	it("loads Node only in loadNodeApi, after its Platform.isDesktop guard, and never with import()", async () => {
+		const code = await buildBundle();
+		// A native dynamic import of a Node module fails in Obsidian's renderer;
+		// it must go through the plugin's `require`.
+		expect(code).not.toMatch(/\bimport\(\s*["']node:/);
+
+		const requires = [...code.matchAll(/\brequire\(\s*["'](node:[^"']+)["']\s*\)/g)].map((m) => m[1]);
+		expect([...requires].sort()).toEqual(NODE_MODULES);
+
+		const start = code.indexOf("function loadNodeApi()");
+		expect(start).toBeGreaterThan(-1);
+		const body = code.slice(start, code.indexOf("return api;", start));
+		const guard = body.search(/if \(!import_obsidian\d*\.Platform\.isDesktop\)/);
+		expect(guard).toBeGreaterThan(-1);
+		for (const name of NODE_MODULES) {
+			const at = body.indexOf(`require("${name}")`);
+			expect(at, name).toBeGreaterThan(guard);
+		}
+	}, 60_000);
+
+	it("desktop: loads the desktop services through the plugin's require", async () => {
+		const code = await buildBundle();
+		const harness = createHarness({ isDesktop: true, isDesktopApp: true, isMobile: false, isMobileApp: false });
+		const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), "tikz-desktop-load-"));
+		try {
+			// `tmpdir` is redirected so the scratch-directory sweep at startup
+			// only ever sees this test's own folder.
+			const sandboxOs = { ...os, tmpdir: () => scratch };
+			const { Plugin, requested } = loadBundle(code, harness, {
+				"node:child_process": childProcess,
+				"node:crypto": nodeCrypto,
+				"node:fs": fs,
+				"node:fs/promises": fsp,
+				"node:os": sandboxOs,
+				"node:path": path,
+				"node:timers": timers,
+			});
+			// Nothing is requested at bundle load, even on desktop.
+			expect(nodeRequests(requested)).toEqual([]);
+
+			const vault = path.join(scratch, "vault");
+			const plugin = new Plugin(createApp(harness, vault), { id: "tikz", dir: ".obsidian/plugins/tikz" }) as {
+				onload(): Promise<void>;
+				desktop?: { pluginDir: string; cache: { directory: string } };
+			};
+			await plugin.onload();
+
+			expect(plugin.desktop?.pluginDir).toBe(path.join(vault, ".obsidian/plugins/tikz"));
+			expect(fs.existsSync(plugin.desktop?.cache.directory ?? "")).toBe(true);
+			expect([...new Set(nodeRequests(requested))].sort()).toEqual(NODE_MODULES);
+		} finally {
+			await fsp.rm(scratch, { recursive: true, force: true });
+		}
 	}, 60_000);
 });

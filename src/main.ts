@@ -25,10 +25,12 @@ export default class TikzPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// `isMobile` too: Obsidian's mobile emulation (`dev:mobile on`) keeps
-		// `isDesktopApp` true but hands plugins `null` for every Node module, so
-		// it must take the mobile path just like a phone does.
-		if (Platform.isDesktopApp && !Platform.isMobile) {
+		// `isDesktop`, not `isDesktopApp`: Obsidian sets it only in the desktop
+		// app, and mobile emulation (`dev:mobile on`) clears it again while
+		// leaving `isDesktopApp` true and handing plugins `null` for every Node
+		// module (checked in 1.15's app.js). It is also the guard Obsidian's
+		// review lint looks for.
+		if (Platform.isDesktop) {
 			// A dynamic import keeps every Node `require` out of the bundle's
 			// top level (see `desktop.ts`).
 			const { createDesktopServices } = await import("./desktop");

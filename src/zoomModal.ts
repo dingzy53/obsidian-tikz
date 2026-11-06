@@ -70,7 +70,7 @@ export class DiagramZoomModal extends Modal {
 			viewport.createDiv({ cls: "tikz-error-hint", text: "The diagram could not be displayed." });
 			return;
 		}
-		const svg = activeDocument.importNode(root, true) as unknown as SVGSVGElement;
+		const svg = viewport.doc.importNode(root, true) as unknown as SVGSVGElement;
 		stage.appendChild(svg);
 		this.svg = svg;
 		this.natural = naturalSize(svg);

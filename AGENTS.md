@@ -26,6 +26,19 @@ two. Do not publish a release only for these changes.
   **TikZ**" and "enable **TikZ**".
 - `manifest.json`: set `"isDesktopOnly": false` (mobile viewer, #3), and in
   `README.md` drop the "desktop only" wording from Requirements/Installation.
+  `npm run lint:review` must report nothing, and the release PR must carry
+  this note, because the submission requirements say a plugin that uses
+  Node.js "must set `isDesktopOnly` to `true`":
+
+  > `isDesktopOnly` is `false` because the plugin works on phones as a
+  > read-only viewer: they display SVGs that a desktop rendered into an opt-in
+  > shared vault folder, and never compile. Node.js is used only on desktop, to
+  > run the local TeX compiler. It is loaded in one function, `loadNodeApi()`
+  > in `src/desktop.ts`, through `require()` guarded by `Platform.isDesktop`,
+  > and `main.ts` imports that module only when `Platform.isDesktop` is true.
+  > `obsidianmd/no-nodejs-modules` passes with `isDesktopOnly: false`, and a
+  > test runs the bundle with every Node module blocked, as on a phone and
+  > under mobile emulation.
 
 ## Commands
 
@@ -34,6 +47,8 @@ two. Do not publish a release only for these changes.
   `.obsidian/plugins/<id>/` at the repo for live testing in a real vault)
 - `npm run build` — typecheck + production bundle
 - `npm run lint` — keep the existing eslint config passing
+- `npm run lint:review` — what Obsidian's community plugin scanner checks
+  (`eslint.review.config.mjs`); must report nothing before a release
 - `npm test` — run vitest unit tests
 - `npm run clean` — remove generated bundle files
 - `npm run version` — synchronize version across package.json, manifest.json, and versions.json
@@ -41,15 +56,23 @@ two. Do not publish a release only for these changes.
 ## Hard constraints — do not violate these
 
 1. **Compiling is desktop only; mobile only displays.** Node and Electron do
-   not exist on mobile, and a top-level `require` of either makes the plugin
-   fail to load there. Only `src/desktop.ts` and the modules it reaches
-   (`cache.ts`, `compiler/engine.ts`, `compiler/pathResolve.ts`) may import
-   them, and `main.ts` loads `desktop.ts` lazily (`await import`) behind
-   `Platform.isDesktopApp && !Platform.isMobile` (mobile emulation keeps
-   `isDesktopApp` true but blocks Node). Everything else must stay platform-neutral. Enforced
-   by the `no-restricted-imports` block in `eslint.config.mjs` and by
-   `test/mobileLoad.test.ts`, which runs the bundle with Node blocked. Mobile
-   never compiles: it shows shared diagrams or "not rendered yet".
+   not exist on mobile, and loading either makes the plugin fail there.
+   - Node is loaded in exactly one place: `loadNodeApi()` in `src/desktop.ts`,
+     with `require()` guarded by `Platform.isDesktop` as its first statement.
+     `isDesktop` is false on phones, tablets and under mobile emulation, which
+     keeps `isDesktopApp` true but blocks Node (checked in Obsidian 1.15).
+   - Every other module reaches Node through `nodeApi()` (`src/nodeApi.ts`)
+     and imports `node:*` only as types. Never use `import()` for a Node
+     module: esbuild keeps it native and it fails in Obsidian's renderer.
+   - `main.ts` loads `desktop.ts` lazily (`await import`) behind
+     `Platform.isDesktop`, so `cache.ts` and `compiler/*` are never evaluated
+     on mobile; only `desktop.ts` may import them. Electron is `require`d
+     lazily in `desktop.ts` only.
+   - Enforced by `obsidianmd/no-nodejs-modules` (set as for
+     `isDesktopOnly: false`) and `no-restricted-imports` in `eslint.config.mjs`,
+     and by `test/mobileLoad.test.ts`, which runs the bundle with Node blocked
+     and checks where Node is loaded. Mobile never compiles: it shows shared
+     diagrams or "not rendered yet".
 2. **Zero vault pollution by default.** Never write `.svg`/`.pdf`/`.png`/log
    files into any folder visible in the Obsidian file explorer. Compile
    scratch files go in the OS temp dir (`os.tmpdir()`, or
@@ -97,9 +120,12 @@ src/render.ts            registerMarkdownCodeBlockProcessor handler,
 src/zoom.ts              Pure zoom/pan maths for the diagram viewer
 src/zoomModal.ts         Diagram viewer modal (zoom, pan, keyboard); adopts the
                          sanitised SVG via DOMParser/importNode
-src/desktop.ts           The only door to Node/Electron: local cache, compiler,
-                         binary discovery, reveal-in-folder. Loaded lazily on
-                         desktop only (rule 1)
+src/desktop.ts           The only door to Node/Electron: loads Node
+                         (`loadNodeApi`), local cache, compiler, binary
+                         discovery, reveal-in-folder. Loaded lazily on desktop
+                         only (rule 1)
+src/nodeApi.ts           The Node modules, provided once by desktop.ts; how
+                         cache.ts and compiler/* reach Node (pure, types only)
 src/shared/              Pure helpers for the mobile shared folder: shared key
                          (WebCrypto), note scanner, sync plan, folder validation
 src/sharedStore.ts       Shared folder through the Vault API (read on mobile,
@@ -116,7 +142,9 @@ src/compiler/
   engine.ts              spawn tex engine + dvisvgm, timeout/kill handling
   pathResolve.ts         binary discovery incl. macOS PATH fallback & Flatpak host spawn
   wrapSource.ts          \documentclass/\begin{document} auto-wrapping
-test/                    unit and integration tests (vitest)
+test/                    unit and integration tests (vitest); test/setup/
+                         provides the real Node modules to the desktop code
+eslint.review.config.mjs what the community scanner checks (`npm run lint:review`)
 manifest.json / esbuild.config.mjs / package.json / version-bump.mjs
 .github/workflows/release.yml / .github/workflows/ci.yml
 LICENSE

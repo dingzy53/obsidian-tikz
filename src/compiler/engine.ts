@@ -11,14 +11,8 @@
  *   2. dvisvgm     → .svg
  */
 
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-// Imported explicitly: this module is plain Node (no `window`), and the explicit
-// binding keeps it clear that these are Node timers, not browser ones.
-import { clearTimeout, setTimeout } from "node:timers";
+import type { ChildProcess } from "node:child_process";
+import { nodeApi } from "../nodeApi";
 import {
 	BinaryNotFoundError,
 	buildHostSpawn,
@@ -69,11 +63,12 @@ interface ProcessResult {
 }
 
 /** Kills a process and its children. `detached` gives us a killable group. */
-function killProcessTree(pid: number | undefined, child: ReturnType<typeof spawn>): void {
+function killProcessTree(pid: number | undefined, child: ChildProcess): void {
+	const { childProcess } = nodeApi();
 	if (pid === undefined) return;
 	if (process.platform === "win32") {
 		try {
-			const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			const killer = childProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
 			// Without a listener a failed spawn (taskkill missing from PATH)
 			// would surface as an uncaught 'error' event.
 			killer.on("error", () => {
@@ -116,6 +111,8 @@ function runProcess(
 		extraDirs?: string[];
 	},
 ): Promise<ProcessResult> {
+	// Node timers (not `window`'s): this module is plain Node.
+	const { childProcess, timers } = nodeApi();
 	return new Promise((resolve) => {
 		let stdout = "";
 		let stderr = "";
@@ -128,9 +125,9 @@ function runProcess(
 		const spawnCmd = host ? host.command : command;
 		const spawnArgs = host ? host.args : args;
 
-		let child: ReturnType<typeof spawn>;
+		let child: ChildProcess;
 		try {
-			child = spawn(spawnCmd, spawnArgs, {
+			child = childProcess.spawn(spawnCmd, spawnArgs, {
 				cwd: options.cwd,
 				env: options.env,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -168,7 +165,7 @@ function runProcess(
 			stderr = append(stderr, chunk);
 		});
 
-		const timer = setTimeout(() => {
+		const timer = timers.setTimeout(() => {
 			timedOut = true;
 			killProcessTree(child.pid, child);
 		}, options.timeoutMs);
@@ -176,7 +173,7 @@ function runProcess(
 		const finish = (result: ProcessResult): void => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			timers.clearTimeout(timer);
 			resolve(result);
 		};
 
@@ -277,6 +274,7 @@ function joinLog(parts: (string | null | undefined)[]): string {
 }
 
 async function readIfExists(file: string): Promise<string | null> {
+	const { fsp } = nodeApi();
 	try {
 		return await fsp.readFile(file, "utf8");
 	} catch {
@@ -286,7 +284,8 @@ async function readIfExists(file: string): Promise<string | null> {
 
 /** Fresh scratch directory, always outside the vault. */
 export function createWorkDir(): string {
-	return path.join(scratchRoot(), `${Date.now()}-${randomUUID().slice(0, 8)}`);
+	const { crypto, path } = nodeApi();
+	return path.join(scratchRoot(), `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
 }
 
 /**
@@ -295,6 +294,7 @@ export function createWorkDir(): string {
  * touched, so a compile running in a second Obsidian window survives.
  */
 export async function sweepScratchDirs(maxAgeMs = 60 * 60 * 1000): Promise<number> {
+	const { fsp, path } = nodeApi();
 	const root = scratchRoot();
 	let removed = 0;
 	let entries: string[];
@@ -347,6 +347,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 }
 
 async function compileTikzUnsafe(options: CompileOptions, started: number): Promise<CompileResult> {
+	const { fs, fsp, path } = nodeApi();
 	const spec = ENGINE_SPECS[options.engine];
 	const jobName = options.jobName ?? "diagram";
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
