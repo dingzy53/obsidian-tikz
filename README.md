@@ -118,6 +118,11 @@ Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right
 ### Automata & Theme Adaptation
 ![Automata & Theme Adaptation](examples/showcase-4.png)
 
+### Mobile Viewer
+A diagram shared from desktop, shown on a phone: in the note, in the viewer, and pinch-zoomed to 203%.
+
+![Mobile Viewer](examples/showcase-mobile.png)
+
 ## Settings
 
 | Setting | Description | Default |
