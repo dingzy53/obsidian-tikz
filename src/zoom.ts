@@ -111,3 +111,25 @@ export function wheelFactor(deltaY: number, deltaMode = 0): number {
 	const factor = Math.exp(-pixels * WHEEL_SENSITIVITY);
 	return Math.min(MAX_WHEEL_FACTOR, Math.max(1 / MAX_WHEEL_FACTOR, factor));
 }
+
+function midpoint(a: Point, b: Point): Point {
+	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function distance(a: Point, b: Point): number {
+	return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/**
+ * Two-finger pinch on a touch screen: scales by the change in finger distance
+ * and pans with the fingers' midpoint, so the content between the fingers
+ * stays between them. Fingers on the same spot (distance 0) only pan.
+ */
+export function pinch(state: ZoomState, previous: [Point, Point], next: [Point, Point]): ZoomState {
+	const before = midpoint(previous[0], previous[1]);
+	const after = midpoint(next[0], next[1]);
+	const startDistance = distance(previous[0], previous[1]);
+	const factor = startDistance > 0 ? distance(next[0], next[1]) / startDistance : 1;
+	const zoomed = zoomAt(state, Number.isFinite(factor) && factor > 0 ? factor : 1, before);
+	return pan(zoomed, after.x - before.x, after.y - before.y);
+}

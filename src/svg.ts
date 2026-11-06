@@ -7,7 +7,10 @@
  * deviation from the file layout in plan §11, recorded there.
  */
 
-import { optimize } from "svgo";
+// The platform-agnostic build: the package default (`lib/svgo-node.js`)
+// requires `fs`, `os`, `path` and `url` for config-file loading, which this
+// plugin never uses and which do not exist on mobile.
+import { optimize } from "svgo/lib/svgo";
 import type { CustomPlugin } from "svgo";
 import type { XastChild, XastParent } from "svgo/lib/types";
 

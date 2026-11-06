@@ -10,6 +10,7 @@ import {
 	centred,
 	fitScale,
 	pan,
+	pinch,
 	wheelFactor,
 	zoomAt,
 	zoomTo,
@@ -31,7 +32,8 @@ export class DiagramZoomModal extends Modal {
 	/** Once the user zooms or pans, a window resize stops re-fitting. */
 	private touched = false;
 	private resizeObserver: ResizeObserver | null = null;
-	private drag: { pointerId: number; x: number; y: number } | null = null;
+	/** Active pointers on the viewport: one drags, two pinch (touch screens). */
+	private readonly pointers = new Map<number, Point>();
 
 	/**
 	 * @param svgMarkup Output of `prepareSvgForDisplay`, i.e. already
@@ -123,26 +125,37 @@ export class DiagramZoomModal extends Modal {
 		);
 
 		viewport.addEventListener("pointerdown", (evt) => {
-			if (evt.button !== 0) return;
-			this.drag = { pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY };
+			if (evt.pointerType === "mouse" && evt.button !== 0) return;
+			if (this.pointers.size >= 2) return;
+			this.pointers.set(evt.pointerId, this.localPoint(evt));
 			viewport.setPointerCapture(evt.pointerId);
 			viewport.addClass("is-dragging");
 		});
 		viewport.addEventListener("pointermove", (evt) => {
-			if (!this.drag || evt.pointerId !== this.drag.pointerId) return;
-			const dx = evt.clientX - this.drag.x;
-			const dy = evt.clientY - this.drag.y;
-			this.drag.x = evt.clientX;
-			this.drag.y = evt.clientY;
+			const previous = this.pointers.get(evt.pointerId);
+			if (!previous) return;
+			const current = this.localPoint(evt);
+
+			if (this.pointers.size === 2) {
+				const [otherId, other] = [...this.pointers].find(([id]) => id !== evt.pointerId) ?? [];
+				if (otherId === undefined || !other) return;
+				this.pointers.set(evt.pointerId, current);
+				this.touched = true;
+				this.apply(pinch(this.state, [previous, other], [current, other]));
+				return;
+			}
+
+			this.pointers.set(evt.pointerId, current);
+			const dx = current.x - previous.x;
+			const dy = current.y - previous.y;
 			if (dx === 0 && dy === 0) return;
 			this.touched = true;
 			this.apply(pan(this.state, dx, dy));
 		});
 		const endDrag = (evt: PointerEvent): void => {
-			if (!this.drag || evt.pointerId !== this.drag.pointerId) return;
-			this.drag = null;
+			if (!this.pointers.delete(evt.pointerId)) return;
 			if (viewport.hasPointerCapture(evt.pointerId)) viewport.releasePointerCapture(evt.pointerId);
-			viewport.removeClass("is-dragging");
+			if (this.pointers.size === 0) viewport.removeClass("is-dragging");
 		};
 		viewport.addEventListener("pointerup", endDrag);
 		viewport.addEventListener("pointercancel", endDrag);

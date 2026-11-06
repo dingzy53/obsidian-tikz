@@ -2,23 +2,22 @@
  * Obsidian wiring for the `tikz` code block: loading state, cache lookup,
  * compile orchestration, error UI and SVG injection.
  *
- * This is the only module that knows about Obsidian, apart from `main.ts` and
- * `settings.ts`.
+ * Runs on both platforms. On desktop (`deps.desktop` set) a block is compiled
+ * and cached locally, and mirrored into the shared folder when sharing is on.
+ * On mobile there is no compiler: a block is shown from the shared folder, or
+ * as "not rendered yet" until a desktop puts it there. No Node imports here
+ * (AGENTS.md rule 1); the desktop services arrive through `deps`.
  */
 
-import * as os from "node:os";
 import { MarkdownRenderChild, Notice } from "obsidian";
 import type { MarkdownPostProcessorContext, Plugin } from "obsidian";
-import { computeCacheKey, DiagramCache } from "./cache";
-import {
-	compileTikz,
-	normalizePreamble,
-	tidyTikzSource,
-	type CompileFailure,
-	type CompileResult,
-} from "./compiler";
+import type { CompileFailure, CompileResult } from "./compiler/engineSpecs";
+import { normalizePreamble, tidyTikzSource } from "./compiler/wrapSource";
+import type { DesktopServices } from "./desktop";
 import { Limiter, resolveConcurrency } from "./limiter";
-import type { TikzSettings } from "./settings";
+import type { TikzSettings } from "./settingsModel";
+import { computeSharedKey } from "./shared/sharedKey";
+import type { SharedDiagramStore } from "./sharedStore";
 import { prepareSvgForDisplay } from "./svg";
 
 /** Fence language tag. Unchanged from the upstream plugin, on purpose. */
@@ -41,10 +40,11 @@ export function isDarkTheme(): boolean {
 
 export interface RenderDeps {
 	getSettings(): TikzSettings;
-	cache: DiagramCache;
+	/** Compiler and local cache; undefined on mobile. */
+	desktop: DesktopServices | undefined;
+	/** The shared (synced) folder: written on desktop, read on mobile. */
+	shared: SharedDiagramStore;
 	openSettings(): void;
-	/** Opens a folder in the OS file manager. */
-	revealPath(path: string): void;
 	/**
 	 * Opens the zoomable viewer. `svg` is already sanitised by
 	 * `prepareSvgForDisplay` (AGENTS.md rule 7).
@@ -55,6 +55,8 @@ export interface RenderDeps {
 export interface TikzRenderer {
 	/** Re-applies display-time post-processing to every mounted diagram. */
 	refreshAll(): void;
+	/** Mobile: re-reads every diagram from the shared folder (it moved). */
+	reloadShared(): void;
 }
 
 /**
@@ -70,20 +72,25 @@ const inFlight = new Map<string, Promise<CompileResult>>();
  */
 const compileLimiter = new Limiter(1);
 
-function startCompile(
+/**
+ * Compiles `source` (once per `key` at a time, within the concurrency limit)
+ * and stores a success in the local cache. Shared by the renderer and the
+ * "Render all for mobile" pass.
+ */
+export function startCompile(
 	key: string,
 	source: string,
 	settings: TikzSettings,
-	cache: DiagramCache,
+	desktop: DesktopServices,
 ): Promise<CompileResult> {
 	const existing = inFlight.get(key);
 	if (existing) return existing;
 
-	compileLimiter.setMax(resolveConcurrency(settings.maxConcurrentCompiles, os.cpus().length));
+	compileLimiter.setMax(resolveConcurrency(settings.maxConcurrentCompiles, desktop.cpuCount()));
 
 	const promise = (async (): Promise<CompileResult> => {
 		const result = await compileLimiter.run(() =>
-			compileTikz({
+			desktop.compile({
 				source,
 				preamble: normalizePreamble(settings.defaultPreamble),
 				engine: settings.engine,
@@ -98,7 +105,7 @@ function startCompile(
 		// away or is re-rendered mid-compile must not throw away a finished
 		// (and expensive) compile.
 		if (result.ok) {
-			await cache.set(key, result.svg).catch((error: unknown) => {
+			await desktop.cache.set(key, result.svg).catch((error: unknown) => {
 				console.warn("[tikz] Could not write the diagram cache.", error);
 			});
 		}
@@ -121,7 +128,10 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	private unloaded = false;
 	private readonly container: HTMLElement;
 	private rawSvg: string | null = null;
+	/** Local cache key on desktop, shared key on mobile; also names the SVG ids. */
 	private cacheKey = "";
+	/** Key of this block in the shared folder; computed lazily on desktop. */
+	private sharedKey = "";
 	private loadingTimer: number | null = null;
 	/** {@link displayKey} of what is currently on screen. */
 	private shownKey = "";
@@ -158,6 +168,17 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			this.openZoom();
 		});
 
+		// On a phone, a diagram that a desktop renders (or re-renders) shows
+		// up as soon as sync delivers the file, without reopening the note.
+		if (!this.deps.desktop) {
+			this.register(
+				this.deps.shared.onChange((key) => {
+					if (this.unloaded || key !== this.sharedKey) return;
+					this.renderFromShared(false).catch((error: unknown) => this.failUnexpectedly(error));
+				}),
+			);
+		}
+
 		// `render()` handles its own failures; this catch is the last line of
 		// defence so a bug can never leave the loading spinner running.
 		this.render().catch((error: unknown) => this.failUnexpectedly(error));
@@ -180,6 +201,13 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		if (!this.rawSvg) return;
 		if (this.displayKey(this.deps.getSettings()) === this.shownKey) return;
 		this.inject(this.rawSvg);
+	}
+
+	/** Mobile: the shared folder changed, so look the diagram up again. */
+	reloadShared(): void {
+		if (this.deps.desktop || this.unloaded || !this.sharedKey) return;
+		this.rawSvg = null;
+		this.renderFromShared(true).catch((error: unknown) => this.failUnexpectedly(error));
 	}
 
 	/** Everything display-time processing depends on besides the SVG itself. */
@@ -239,26 +267,35 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		this.deps.openZoom(prepared, settings.colorAdaptation === "light-canvas" && isDark);
 	}
 
-	private showLoading(): void {
+	private showLoading(text = "Compiling diagram…"): void {
+		this.stopLoadingTimer();
 		this.setZoomable(false);
 		this.container.empty();
 		const box = this.container.createDiv({ cls: "tikz-loading" });
 		const started = Date.now();
-		const label = box.createSpan({ text: "Compiling diagram…" });
+		const label = box.createSpan({ text });
 
 		// Compiles are no longer near-instant, so show that time is passing
 		// rather than letting the block look frozen.
 		this.loadingTimer = window.setInterval(() => {
 			const seconds = Math.round((Date.now() - started) / 1000);
-			label.setText(`Compiling diagram… ${seconds}s`);
+			label.setText(`${text} ${seconds}s`);
 		}, 500);
 	}
 
 	private async render(): Promise<void> {
+		const desktop = this.deps.desktop;
+		if (!desktop) {
+			this.sharedKey = await computeSharedKey(tidyTikzSource(this.source));
+			this.cacheKey = this.sharedKey;
+			await this.renderFromShared(true);
+			return;
+		}
+
 		const settings = this.deps.getSettings();
 		const tidied = tidyTikzSource(this.source);
 		const preamble = normalizePreamble(settings.defaultPreamble);
-		this.cacheKey = computeCacheKey({
+		this.cacheKey = desktop.localKey({
 			source: tidied,
 			preamble,
 			engine: settings.engine,
@@ -266,26 +303,80 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 		this.showLoading();
 
-		const cached = await this.deps.cache.get(this.cacheKey);
+		const cached = await desktop.cache.get(this.cacheKey);
 		if (this.unloaded) return;
 		if (cached) {
 			this.stopLoadingTimer();
 			this.rawSvg = cached;
 			this.inject(cached);
+			this.share(tidied, cached, true);
 			return;
 		}
 
-		const result = await startCompile(this.cacheKey, this.source, settings, this.deps.cache);
+		const result = await startCompile(this.cacheKey, this.source, settings, desktop);
 		if (this.unloaded) return;
 		this.stopLoadingTimer();
 
 		if (result.ok) {
 			this.rawSvg = result.svg;
 			this.inject(result.svg);
+			this.share(tidied, result.svg, false);
 			return;
 		}
 
 		this.showError(result);
+	}
+
+	/**
+	 * Desktop with sharing on: mirrors the render into the shared folder. A
+	 * cache hit only fills a gap; a fresh compile also replaces an outdated
+	 * file (the store skips identical content). Fire and forget: sharing must
+	 * never break rendering.
+	 */
+	private share(tidied: string, svg: string, onlyIfMissing: boolean): void {
+		if (!this.deps.getSettings().shareWithMobile) return;
+		const shared = this.deps.shared;
+		void (async () => {
+			const key = await computeSharedKey(tidied);
+			if (onlyIfMissing && (await shared.has(key))) return;
+			await shared.write(key, svg);
+		})().catch((error: unknown) => {
+			console.warn("[tikz] Could not write the shared diagram.", error);
+		});
+	}
+
+	/** Mobile: show the diagram a desktop put in the shared folder. */
+	private async renderFromShared(showSpinner: boolean): Promise<void> {
+		if (showSpinner) this.showLoading("Loading diagram…");
+		const svg = await this.deps.shared.read(this.sharedKey);
+		if (this.unloaded) return;
+		this.stopLoadingTimer();
+		if (svg) {
+			if (svg === this.rawSvg) return;
+			this.rawSvg = svg;
+			this.inject(svg);
+			return;
+		}
+		if (this.rawSvg) return;
+		this.showPending();
+	}
+
+	/**
+	 * Mobile, no shared file yet. Not an error: nothing was compiled, there is
+	 * just no render to show until a desktop provides one.
+	 */
+	private showPending(): void {
+		this.setZoomable(false);
+		this.container.empty();
+		this.container.classList.remove("tikz-light-canvas");
+		const box = this.container.createDiv({ cls: "tikz-pending" });
+		box.createDiv({ cls: "tikz-pending-summary", text: "TikZ diagram not rendered yet" });
+		box.createDiv({
+			cls: "tikz-pending-hint",
+			text:
+				"Phones cannot compile TikZ. Turn on “Share diagrams with mobile” on a desktop, then open " +
+				"this note there or use “Render all for mobile”. The diagram appears here once it syncs.",
+		});
 	}
 
 	private inject(svg: string): void {
@@ -381,7 +472,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 		if (failure.workDir) {
 			actions.createEl("button", { text: "Reveal build folder" }).onclick = () => {
-				this.deps.revealPath(failure.workDir);
+				this.deps.desktop?.revealPath(failure.workDir);
 			};
 		}
 	}
@@ -403,6 +494,9 @@ export function registerTikzProcessor(plugin: Plugin, deps: RenderDeps): TikzRen
 	return {
 		refreshAll(): void {
 			for (const component of mounted) component.redraw();
+		},
+		reloadShared(): void {
+			for (const component of mounted) component.reloadShared();
 		},
 	};
 }

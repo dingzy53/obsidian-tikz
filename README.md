@@ -15,7 +15,8 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 - The real compiler log when a diagram fails, and a timeout instead of an endless spinner.
 - Colours adapted for dark themes.
 - Click a diagram to open it in a zoomable viewer.
-- A render cache inside the plugin folder. Nothing is written into your notes' folders.
+- A render cache inside the plugin folder. Nothing is written into your notes' folders unless you turn on mobile sharing.
+- Optional: share rendered diagrams with your phone or tablet through Obsidian Sync, git or Syncthing.
 
 ## Requirements
 
@@ -85,6 +86,23 @@ Click a diagram, or select it with Tab and press Enter, to open it in a viewer. 
 
 The viewer uses the already rendered SVG, so nothing is recompiled. Turn it off with **Click to enlarge diagrams**.
 
+### Mobile
+
+Phones and tablets cannot run TeX, so on mobile the plugin only **displays** diagrams that a desktop rendered and shared. Sharing is **off by default**, because it adds visible files to your vault.
+
+> [!NOTE]
+> Mobile support ships with the next release. Until then the plugin is still marked desktop-only in the community directory.
+
+1. On a desktop, turn on **Settings → TikZ → Mobile → Share diagrams with mobile**. The plugin creates the shared folder (`TikZ cache` by default) and fills it with one `<hash>.svg` per diagram in your notes, copying renders it already has.
+2. Use **Render all for mobile** to compile the diagrams you have never opened on that desktop. New and edited diagrams are added as they render, and **Update shared diagrams now** (also run once at startup) removes files no note uses any more. Only files named `<64 hex>.svg` are ever deleted, so anything else you keep in the folder is safe.
+3. Let your sync service carry the folder to your phone, then install and enable the plugin there. Diagrams show up as soon as they sync, and anything not shared yet shows **"TikZ diagram not rendered yet"**. Clicking a diagram opens the zoomable viewer, with pinch to zoom.
+
+- **Obsidian Sync**: keep **Images** in selective sync (the default; `.svg` counts as an image). Turn on **Installed community plugin list** to sync the plugin itself and its settings, so the phone uses the same shared folder.
+- **git, Syncthing, iCloud** and similar: work as-is, since the folder is an ordinary vault folder.
+- **Why a visible folder?** Obsidian Sync never copies folders whose name starts with a dot, and inside a plugin's folder it only copies `manifest.json`, `main.js`, `styles.css` and `data.json`. A hidden cache, including the plugin's own `cache/`, would never reach your phone. You can still add the shared folder to **Settings → Files and links → Excluded files** to keep it out of search and the graph.
+- **Turning sharing off** asks whether to delete the shared diagrams (they disappear from synced devices too) or keep them. **Delete shared diagrams** stays in settings while any remain.
+- Shared files are treated as untrusted: they go through the same SVG sanitiser as fresh renders before they are displayed.
+
 ### Cache & Scratch Files
 
 - **Render cache**: Compiled diagrams (`<hash>.svg`) are saved in `<vault>/.obsidian/plugins/tikz/cache/` (hidden inside the plugin directory; zero vault pollution). Failed compiles are not cached; the error block shows the live compiler log. When the entry limit is reached, the least recently *used* diagrams are dropped first.
@@ -109,6 +127,8 @@ Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right
 |---|---|---|
 | **Dark mode colours** | `Adaptive` (mirrors lightness with contrast floor), `Light canvas` (light panel), or `Off`. | `Adaptive` |
 | **Click to enlarge diagrams** | Clicking a diagram (or Enter on it) opens the zoomable viewer. | `true` |
+| **Share diagrams with mobile** | Desktop: keep an SVG of every diagram in the shared folder so a phone can show it. Adds visible files to the vault. | `false` |
+| **Shared folder** | Vault folder for shared diagrams; must be visible and outside the config folder. Use the same one on every device. | `TikZ cache` |
 | **TeX engine** | `dvilualatex` (recommended), `latex`, `xelatex`, or `pdflatex`. | `dvilualatex` |
 | **Binary paths** | Custom path overrides for TeX engine and `dvisvgm`, with an **Auto-detect** button. | Auto (`PATH`) |
 | **Extra PATH** | Extra directories to append to `PATH` at runtime. | Empty |

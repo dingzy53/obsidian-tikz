@@ -7,6 +7,7 @@ import {
 	clampScale,
 	fitScale,
 	pan,
+	pinch,
 	wheelFactor,
 	zoomAt,
 	zoomTo,
@@ -148,5 +149,35 @@ describe("wheelFactor", () => {
 		expect(wheelFactor(-1e6)).toBe(2);
 		expect(wheelFactor(1e6)).toBe(0.5);
 		expect(wheelFactor(Number.NaN)).toBe(1);
+	});
+});
+
+describe("pinch", () => {
+	const start: ZoomState = { scale: 1.5, x: 20, y: -10 };
+
+	it("keeps the content between the fingers between them", () => {
+		const prev: [Point, Point] = [{ x: 100, y: 100 }, { x: 200, y: 140 }];
+		const next: [Point, Point] = [{ x: 60, y: 90 }, { x: 260, y: 170 }];
+		const midBefore = { x: 150, y: 120 };
+		const midAfter = { x: 160, y: 130 };
+		const anchored = toContent(start, midBefore);
+		const after = pinch(start, prev, next);
+		const moved = toContent(after, midAfter);
+		expect(moved.x).toBeCloseTo(anchored.x);
+		expect(moved.y).toBeCloseTo(anchored.y);
+		expect(after.scale).toBeCloseTo(start.scale * 2);
+	});
+
+	it("only pans when the fingers keep their distance", () => {
+		const after = pinch(start, [{ x: 0, y: 0 }, { x: 10, y: 0 }], [{ x: 5, y: 7 }, { x: 15, y: 7 }]);
+		expect(after).toEqual({ scale: start.scale, x: start.x + 5, y: start.y + 7 });
+	});
+
+	it("clamps the scale and survives fingers on the same spot", () => {
+		const huge = pinch(start, [{ x: 0, y: 0 }, { x: 1, y: 0 }], [{ x: 0, y: 0 }, { x: 1e6, y: 0 }]);
+		expect(huge.scale).toBe(MAX_SCALE);
+		const same = pinch(start, [{ x: 3, y: 3 }, { x: 3, y: 3 }], [{ x: 4, y: 4 }, { x: 4, y: 4 }]);
+		expect(same.scale).toBe(start.scale);
+		expect(Number.isFinite(same.x)).toBe(true);
 	});
 });
