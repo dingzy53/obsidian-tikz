@@ -145,6 +145,8 @@ src/compiler/
 test/                    unit and integration tests (vitest); test/setup/
                          provides the real Node modules to the desktop code
 eslint.review.config.mjs what the community scanner checks (`npm run lint:review`)
+esbuild.shared.mjs       bundle options shared by esbuild.config.mjs and
+                         test/mobileLoad.test.ts (+ .d.mts types)
 manifest.json / esbuild.config.mjs / package.json / version-bump.mjs
 .github/workflows/release.yml / .github/workflows/ci.yml
 LICENSE
@@ -155,14 +157,15 @@ LICENSE
 - Strict TypeScript; justify any new `any` with a comment.
 - Keep `src/compiler/*`, `src/shared/*` and `src/cache.ts` free of any `import "obsidian"` —
   they should be unit-testable as plain Node modules, independent of the
-  Plugin lifecycle.
+  Plugin lifecycle. `cache.ts` and `compiler/*` get Node from `nodeApi()`
+  (rule 1); tests provide it in `test/setup/nodeApi.ts`.
 - Prefer async/await; avoid unhandled promise rejections around
   `child_process` calls (they will crash the render, not just the compile).
 
 ## Definition of done for any change
 
 - `npm run build` passes with no type errors.
-- `npm run lint` and `npm test` pass.
+- `npm run lint`, `npm run lint:review` (no findings) and `npm test` pass.
 - Verified in a real vault or integration test suite: at minimum
   a working diagram, a deliberately broken one (real error shown, no hang),
   and a dark-mode toggle check.

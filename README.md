@@ -178,7 +178,9 @@ To force a diagram to look identical in both light and dark themes, give it a ba
 npm run dev     # watch build (outputs main.js)
 npm run build   # typecheck + production bundle
 npm run lint    # eslint
+npm run lint:review  # what Obsidian's community plugin scanner checks
 npm test        # vitest unit tests
+npm run m1      # integration tests against your real TeX install
 npm run clean   # clean generated bundle files
 ```
 

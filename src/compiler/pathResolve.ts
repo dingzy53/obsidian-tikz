@@ -1,8 +1,8 @@
 /**
  * Binary discovery for the TeX engine and `dvisvgm`.
  *
- * Pure Node module: no `import "obsidian"` (AGENTS.md), so it can be tested
- * directly.
+ * Plain Node module: no `import "obsidian"` (AGENTS.md), so it can be tested
+ * directly; Node itself comes from `nodeApi()` (AGENTS.md rule 1).
  *
  * The problem this exists to solve (plan §6.4): a GUI app launched from
  * Finder/Dock — including Obsidian.app — does **not** inherit the interactive

@@ -2,7 +2,8 @@
  * Compile a TikZ source string into an SVG by shelling out to a local TeX
  * distribution.
  *
- * Pure Node module: no `import "obsidian"` (AGENTS.md), so the whole
+ * Plain Node module: no `import "obsidian"` (AGENTS.md); Node itself comes
+ * from `nodeApi()`, provided once on desktop (AGENTS.md rule 1). So the whole
  * "string in → {svg} | {error, log} out" contract is testable headlessly
  * (plan §M1) and reusable if a general `latex` fence is added later.
  *
