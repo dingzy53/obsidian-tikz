@@ -101,7 +101,6 @@ Diagrams rendered side-by-side in **Light mode** (left) and **Dark mode** (right
 | **Extra PATH** | Extra directories to append to `PATH` at runtime. | Empty |
 | **Default preamble** | Common packages injected when no `\documentclass` is provided. | Standard TikZ packages |
 | **Allow shell escape** | Enables `-shell-escape` (danger: executes arbitrary system commands). | `false` |
-| **Restrict file access** | Runs TeX with `openin_any=p` so a diagram cannot read files outside its build folder (`\input{~/.ssh/config}`). Side effect: `\includegraphics`/`\input` with absolute paths stop working. | `true` |
 | **Compile timeout** | Maximum seconds per compilation stage (1–3600) before killing the process tree. Time spent queued does not count. | `20` |
 | **Parallel compiles** | How many diagrams compile at once; the rest queue. `0` = automatic (half the CPU cores, 1–4). | `0` |
 | **Maximum cache** | Maximum cached SVGs (0 = unlimited). | `500` |
@@ -137,7 +136,7 @@ To force a diagram to look identical in both light and dark themes, give it a ba
 
 - **Shell escape is off by default**: Vault content is untrusted; `-shell-escape` is never enabled unless explicitly turned on by the user.
 - **Direct argv execution**: Subprocesses are spawned with an argv array (`spawn`/`execFile`), never interpolated shell strings.
-- **File reads are restricted**: TeX runs with `openin_any=p`, so a note cannot `\input` or `\includegraphics` arbitrary files (e.g. `~/.ssh/config`) into a diagram. It can be turned off in settings for trusted vaults.
+- **File reads are not sandboxed**: Like any TeX run, a diagram can `\input` or `\includegraphics` any file your user account can read, and render it into the note and the plugin cache. TeX Live dropped `openin_any` read restrictions in 2026 as ineffective, so only open vaults you trust. Shell escape stays off either way.
 - **SVG sanitization (allowlist, fail-closed)**: The SVG is parsed and only the elements dvisvgm/PGF emit are kept; event handlers, external `href`/`url()` references, `<style>`, `<a>` and animation elements are removed. An SVG that cannot be parsed is rejected rather than displayed, and the result is inserted via `DOMParser`, never `innerHTML`.
 
 ## Development
