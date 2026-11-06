@@ -24,7 +24,12 @@ export function normalizeFolderPath(raw: string): string {
 		.join("/");
 }
 
-export function validateSharedFolder(raw: unknown, configDir = ".obsidian"): FolderCheck {
+/**
+ * @param configDir The vault's `Vault#configDir`, when known. Without it the
+ *   config folder is still refused by the dot-segment rule, since Obsidian
+ *   requires a config folder name to start with a dot.
+ */
+export function validateSharedFolder(raw: unknown, configDir?: string): FolderCheck {
 	if (typeof raw !== "string") return { ok: false, error: "Enter a folder path." };
 	const normalized = normalizeFolderPath(raw);
 	if (normalized.length === 0) {
@@ -34,7 +39,7 @@ export function validateSharedFolder(raw: unknown, configDir = ".obsidian"): Fol
 	if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
 		return { ok: false, error: "Use a plain vault-relative path, without . or .. segments." };
 	}
-	if (normalized === configDir || normalized.startsWith(`${configDir}/`)) {
+	if (configDir && (normalized === configDir || normalized.startsWith(`${configDir}/`))) {
 		return { ok: false, error: "Sync does not carry this folder: choose one outside the config folder." };
 	}
 	if (segments.some((segment) => segment.startsWith("."))) {

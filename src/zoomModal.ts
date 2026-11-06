@@ -70,7 +70,7 @@ export class DiagramZoomModal extends Modal {
 			viewport.createDiv({ cls: "tikz-error-hint", text: "The diagram could not be displayed." });
 			return;
 		}
-		const svg = document.importNode(root, true) as unknown as SVGSVGElement;
+		const svg = activeDocument.importNode(root, true) as unknown as SVGSVGElement;
 		stage.appendChild(svg);
 		this.svg = svg;
 		this.natural = naturalSize(svg);
@@ -224,12 +224,14 @@ export class DiagramZoomModal extends Modal {
 		if (!this.svg || !this.stage) return;
 		// Zoom by resizing the SVG rather than with a CSS `scale()`: the browser
 		// then re-renders the vectors, while a scaled layer can stay blurry.
-		// These are per-frame computed values, so they cannot be CSS classes.
-		this.svg.setCssStyles({
-			width: `${this.natural.width * state.scale}px`,
-			height: `${this.natural.height * state.scale}px`,
+		// These are per-frame computed values, so they go in as CSS variables
+		// that `styles.css` applies.
+		this.stage.setCssProps({
+			"--tikz-zoom-width": `${this.natural.width * state.scale}px`,
+			"--tikz-zoom-height": `${this.natural.height * state.scale}px`,
+			"--tikz-zoom-x": `${state.x}px`,
+			"--tikz-zoom-y": `${state.y}px`,
 		});
-		this.stage.setCssStyles({ transform: `translate(${state.x}px, ${state.y}px)` });
 		this.zoomLabel?.setText(`${Math.round(state.scale * 100)}%`);
 	}
 

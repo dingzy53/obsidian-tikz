@@ -215,7 +215,7 @@ export class SharedCleanupModal extends Modal {
 			.addButton((button) =>
 				button
 					.setButtonText(`Delete ${this.count} shared diagram(s)`)
-					.setWarning()
+					.setDestructive()
 					.onClick(() => this.decide(true)),
 			);
 	}

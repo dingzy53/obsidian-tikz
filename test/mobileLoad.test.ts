@@ -269,6 +269,7 @@ function loadBundle(code: string, harness: Harness): { Plugin: new (app: unknown
 		window: { ...timers },
 		...timers,
 		document,
+		activeDocument: document,
 		DOMParser: FakeDOMParser,
 		navigator: {},
 		createFragment: () => new FakeElement(),

@@ -204,6 +204,8 @@
 	top: 0;
 	left: 0;
 	transform-origin: 0 0;
+	/* Set per frame by zoomModal.ts. */
+	transform: translate(var(--tikz-zoom-x, 0px), var(--tikz-zoom-y, 0px));
 }
 
 .tikz-zoom-stage.tikz-light-canvas {
@@ -214,4 +216,6 @@
 .tikz-zoom-stage svg {
 	display: block;
 	max-width: none;
+	width: var(--tikz-zoom-width, auto);
+	height: var(--tikz-zoom-height, auto);
 }

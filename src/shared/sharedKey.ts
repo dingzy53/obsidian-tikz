@@ -13,6 +13,6 @@ export const SHARED_KEY_VERSION = 1;
 
 export async function computeSharedKey(tidiedSource: string): Promise<string> {
 	const bytes = new TextEncoder().encode(`tikz-shared-v${SHARED_KEY_VERSION}\u0000${tidiedSource}`);
-	const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+	const digest = await crypto.subtle.digest("SHA-256", bytes);
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -32,7 +32,7 @@ export const CODE_BLOCK_LANGUAGE = "tikz";
  */
 export function isDarkTheme(): boolean {
 	try {
-		return document.body.classList.contains("theme-dark");
+		return activeDocument.body.classList.contains("theme-dark");
 	} catch {
 		return false;
 	}
@@ -397,7 +397,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			if (doc.getElementsByTagName("parsererror").length > 0) {
 				throw new Error("the sanitised SVG is not well-formed XML");
 			}
-			element = document.importNode(doc.documentElement, true);
+			element = activeDocument.importNode(doc.documentElement, true);
 		} catch (error) {
 			this.showDisplayError(error);
 			return;
