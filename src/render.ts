@@ -86,7 +86,6 @@ function startCompile(
 				dvisvgmPath: settings.dvisvgmPath,
 				extraPathDirs: settings.extraPathDirs,
 				allowShellEscape: settings.allowShellEscape,
-				restrictFileAccess: settings.restrictFileAccess,
 				timeoutMs: settings.compileTimeoutSeconds * 1000,
 			}),
 		);
