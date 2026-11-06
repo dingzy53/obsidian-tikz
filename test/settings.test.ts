@@ -17,6 +17,33 @@ describe("mergeSettings", () => {
 		expect(mergeSettings(undefined)).toEqual(DEFAULT_SETTINGS);
 	});
 
+	it("keeps mobile sharing off unless it is exactly true (it writes into the vault)", () => {
+		expect(DEFAULT_SETTINGS.shareWithMobile).toBe(false);
+		expect(mergeSettings({ shareWithMobile: "true" }).shareWithMobile).toBe(false);
+		expect(mergeSettings({ shareWithMobile: 1 }).shareWithMobile).toBe(false);
+		expect(mergeSettings({ shareWithMobile: true }).shareWithMobile).toBe(true);
+		expect(applySettingChange(DEFAULT_SETTINGS, "shareWithMobile", true).shareWithMobile).toBe(true);
+	});
+
+	it("normalises the shared folder and falls back for folders Sync would skip", () => {
+		expect(DEFAULT_SETTINGS.sharedFolder).toBe("TikZ cache");
+		expect(mergeSettings({ sharedFolder: "/Assets//TikZ/" }).sharedFolder).toBe("Assets/TikZ");
+		expect(mergeSettings({ sharedFolder: ".tikz-cache" }).sharedFolder).toBe("TikZ cache");
+		expect(mergeSettings({ sharedFolder: ".obsidian/plugins/tikz" }).sharedFolder).toBe("TikZ cache");
+		expect(mergeSettings({ sharedFolder: 7 }).sharedFolder).toBe("TikZ cache");
+	});
+
+	it("enables click-to-enlarge by default and keeps only boolean values", () => {
+		expect(DEFAULT_SETTINGS.zoomOnClick).toBe(true);
+		expect(mergeSettings({}).zoomOnClick).toBe(true);
+		expect(mergeSettings({ zoomOnClick: false }).zoomOnClick).toBe(false);
+		expect(mergeSettings({ zoomOnClick: "no" }).zoomOnClick).toBe(true);
+		expect(mergeSettings({ zoomOnClick: 0 }).zoomOnClick).toBe(true);
+		expect(mergeSettings(mergeSettings({ zoomOnClick: false })).zoomOnClick).toBe(false);
+		expect(readSettingValue(DEFAULT_SETTINGS, "zoomOnClick")).toBe(true);
+		expect(applySettingChange(DEFAULT_SETTINGS, "zoomOnClick", false).zoomOnClick).toBe(false);
+	});
+
 	it("never leaves shell escape on unless it is exactly true", () => {
 		expect(mergeSettings({ allowShellEscape: "yes" }).allowShellEscape).toBe(false);
 		expect(mergeSettings({ allowShellEscape: 1 }).allowShellEscape).toBe(false);

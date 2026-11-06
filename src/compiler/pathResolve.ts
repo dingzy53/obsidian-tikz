@@ -1,8 +1,8 @@
 /**
  * Binary discovery for the TeX engine and `dvisvgm`.
  *
- * Pure Node module: no `import "obsidian"` (AGENTS.md), so it can be tested
- * directly.
+ * Plain Node module: no `import "obsidian"` (AGENTS.md), so it can be tested
+ * directly; Node itself comes from `nodeApi()` (AGENTS.md rule 1).
  *
  * The problem this exists to solve (plan §6.4): a GUI app launched from
  * Finder/Dock — including Obsidian.app — does **not** inherit the interactive
@@ -13,13 +13,12 @@
  * escape hatch asks the user's login shell what it would have used.
  */
 
-import { execFile, execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import { nodeApi } from "../nodeApi";
+
 
 /** True when running inside a Flatpak container. */
 export function isFlatpak(): boolean {
+	const { fs } = nodeApi();
 	return Boolean(process.env.FLATPAK_ID) || fs.existsSync("/.flatpak-info");
 }
 
@@ -73,9 +72,10 @@ export function isExecutableOnHost(file: string): boolean {
 }
 
 function probeExecutableOnHost(file: string): boolean {
+	const { childProcess } = nodeApi();
 	try {
 		if (file.includes("/") || file.includes("\\")) {
-			execFileSync("/usr/bin/flatpak-spawn", ["--host", "test", "-x", file], {
+			childProcess.execFileSync("/usr/bin/flatpak-spawn", ["--host", "test", "-x", file], {
 				stdio: "ignore",
 				timeout: 3000,
 				windowsHide: true,
@@ -83,7 +83,7 @@ function probeExecutableOnHost(file: string): boolean {
 			return true;
 		}
 		// Bare command: probe host PATH via POSIX `command -v`
-		const stdout = execFileSync(
+		const stdout = childProcess.execFileSync(
 			"/usr/bin/flatpak-spawn",
 			["--host", "sh", "-c", 'command -v "$1"', "_", file],
 			{
@@ -108,8 +108,9 @@ export function findOnHost(name: string): string | null {
 }
 
 function probeFindOnHost(name: string): string | null {
+	const { childProcess, path } = nodeApi();
 	try {
-		const stdout = execFileSync(
+		const stdout = childProcess.execFileSync(
 			"/usr/bin/flatpak-spawn",
 			["--host", "sh", "-c", 'command -v "$1"', "_", name],
 			{
@@ -182,6 +183,7 @@ export function knownBinDirs(platform: NodeJS.Platform = process.platform): stri
 
 /** True when `file` exists and is executable by the current user. */
 export function isExecutable(file: string): boolean {
+	const { fs } = nodeApi();
 	try {
 		const stat = fs.statSync(file);
 		if (!stat.isFile()) return false;
@@ -194,6 +196,7 @@ export function isExecutable(file: string): boolean {
 
 /** Candidate file names for a bare command on this platform. */
 function candidateNames(name: string, platform: NodeJS.Platform): string[] {
+	const { path } = nodeApi();
 	if (platform !== "win32") return [name];
 	if (path.extname(name).length > 0) return [name];
 	return [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name];
@@ -201,6 +204,7 @@ function candidateNames(name: string, platform: NodeJS.Platform): string[] {
 
 /** Splits a `PATH`-style string using the platform delimiter. */
 export function splitPathList(value: string | undefined): string[] {
+	const { path } = nodeApi();
 	if (!value) return [];
 	return value
 		.split(path.delimiter)
@@ -255,6 +259,7 @@ export class BinaryNotFoundError extends Error {
  * it will automatically resolve via the host system using flatpak-spawn.
  */
 export function resolveBinary(options: ResolveBinaryOptions): ResolvedBinary {
+	const { path } = nodeApi();
 	const platform = options.platform ?? process.platform;
 
 	if (options.override && options.override.trim().length > 0) {
@@ -304,6 +309,7 @@ export function buildSpawnEnv(
 	extraDirs: string[] = [],
 	platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
+	const { path } = nodeApi();
 	const dirs = [
 		...splitPathList(process.env.PATH),
 		...extraDirs.map((dir) => dir.trim()).filter((dir) => dir.length > 0),
@@ -328,6 +334,7 @@ const SAFE_COMMAND_NAME = /^[A-Za-z0-9._-]+$/;
  * on the compile path (AGENTS.md rule 4).
  */
 export function detectBinaryViaLoginShell(name: string, timeoutMs = 10_000): Promise<string | null> {
+	const { childProcess } = nodeApi();
 	if (!SAFE_COMMAND_NAME.test(name)) {
 		return Promise.reject(new Error(`Refusing to probe a non-command name: ${name}`));
 	}
@@ -341,7 +348,7 @@ export function detectBinaryViaLoginShell(name: string, timeoutMs = 10_000): Pro
 		const hostShell = "sh";
 		const hostArgs = ["--host", hostShell, "-lic", `command -v -- ${name}`];
 		return new Promise((resolve) => {
-			execFile("/usr/bin/flatpak-spawn", hostArgs, { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+			childProcess.execFile("/usr/bin/flatpak-spawn", hostArgs, { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
 				if (error && !stdout) {
 					resolve(null);
 					return;
@@ -368,7 +375,7 @@ export function detectBinaryViaLoginShell(name: string, timeoutMs = 10_000): Pro
 			: ["-lic", `command -v -- ${name}`];
 
 	return new Promise((resolve) => {
-		execFile(shell, args, { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+		childProcess.execFile(shell, args, { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
 			if (error && !stdout) {
 				resolve(null);
 				return;
@@ -441,6 +448,7 @@ export function buildHostSpawn(
 
 /** Root of the per-compile scratch directories (never inside the vault). */
 export function scratchRoot(): string {
+	const { os, path } = nodeApi();
 	if (isFlatpak()) {
 		const cacheDir = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
 		return path.join(cacheDir, "obsidian-tikz");

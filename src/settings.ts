@@ -1,16 +1,11 @@
 import { App, Notice, PluginSettingTab } from "obsidian";
 import type { Setting, SettingDefinitionItem } from "obsidian";
 import type TikzPlugin from "./main";
-import type { DiagramCache } from "./cache";
-import {
-	DEFAULT_PREAMBLE,
-	DEFAULT_TIMEOUT_SECONDS,
-	ENGINE_IDS,
-	ENGINE_SPECS,
-	describeResolution,
-	detectBinaryViaLoginShell,
-	isFlatpak,
-} from "./compiler";
+import { DEFAULT_TIMEOUT_SECONDS, ENGINE_IDS, ENGINE_SPECS } from "./compiler/engineSpecs";
+import { DEFAULT_PREAMBLE } from "./compiler/wrapSource";
+import type { DesktopServices } from "./desktop";
+import { validateSharedFolder } from "./shared/folder";
+import { describeSyncReport } from "./sharedSync";
 import {
 	MAX_CONCURRENT_COMPILES_LIMIT,
 	MAX_TIMEOUT_SECONDS,
@@ -26,6 +21,10 @@ export { DEFAULT_SETTINGS, mergeSettings, type TikzSettings } from "./settingsMo
  * show up in the global settings search. Reads and writes go through
  * {@link getControlValue}/{@link setControlValue}, and anything that changes
  * what the tab shows calls `update()`.
+ *
+ * On mobile there is no compiler, so the compiler, preamble, security and
+ * cache rows are hidden (`visible`). Obsidian still runs their `render`
+ * callbacks, so those return early when `plugin.desktop` is undefined.
  */
 export class TikzSettingTab extends PluginSettingTab {
 	plugin: TikzPlugin;
@@ -35,9 +34,16 @@ export class TikzSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	get cache(): DiagramCache {
-		return this.plugin.cache;
+	/**
+	 * Undefined on mobile. Obsidian runs a row's `render` even while the row is
+	 * hidden, so desktop-only rows must cope with that rather than throw (a
+	 * throw aborts the whole tab).
+	 */
+	private get desktop(): DesktopServices | undefined {
+		return this.plugin.desktop;
 	}
+
+	private readonly isDesktop = (): boolean => this.plugin.desktop !== undefined;
 
 	override getControlValue(key: string): unknown {
 		return readSettingValue(this.plugin.settings, key);
@@ -49,7 +55,22 @@ export class TikzSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 
 		switch (key) {
+			case "shareWithMobile":
+				if (value === true) {
+					this.update();
+					await this.plugin.runSharedSync(true);
+					this.update();
+				} else {
+					this.plugin.confirmSharedCleanup(() => this.update());
+					this.update();
+				}
+				break;
+			case "sharedFolder":
+				this.plugin.reloadSharedDiagrams();
+				this.update();
+				break;
 			case "colorAdaptation":
+			case "zoomOnClick":
 				this.plugin.refreshAllDiagrams();
 				break;
 			case "engine":
@@ -67,6 +88,7 @@ export class TikzSettingTab extends PluginSettingTab {
 	override getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
 			this.renderingGroup(),
+			this.mobileGroup(),
 			this.binariesGroup(),
 			this.preambleGroup(),
 			this.securityGroup(),
@@ -98,7 +120,15 @@ export class TikzSettingTab extends PluginSettingTab {
 					},
 				},
 				{
+					name: "Click to enlarge diagrams",
+					desc:
+						"Clicking a diagram, or pressing Enter on it, opens it in a viewer where you can zoom " +
+						"(wheel, pinch, + and −) and drag to pan.",
+					control: { type: "toggle", key: "zoomOnClick" },
+				},
+				{
 					name: "TeX engine",
+					visible: this.isDesktop,
 					desc: "Which engine compiles your diagrams. LuaLaTeX is the default: it matched LaTeX on every test case and also supports system fonts (fontspec).",
 					aliases: ["latex", "lualatex", "xelatex", "pdflatex"],
 					control: {
@@ -115,6 +145,7 @@ export class TikzSettingTab extends PluginSettingTab {
 		return {
 			type: "group",
 			heading: "TeX binaries",
+			visible: this.isDesktop,
 			items: [
 				{
 					name: "Detected binaries",
@@ -124,7 +155,7 @@ export class TikzSettingTab extends PluginSettingTab {
 				{
 					name: "Running in Flatpak",
 					desc: "Host TeX distributions (TeX Live, MacTeX) are discovered automatically and run through flatpak-spawn.",
-					visible: () => isFlatpak(),
+					visible: () => this.plugin.desktop?.isFlatpak() ?? false,
 				},
 				{
 					name: "PATH on macOS",
@@ -164,6 +195,7 @@ export class TikzSettingTab extends PluginSettingTab {
 		return {
 			type: "group",
 			heading: "Default preamble",
+			visible: this.isDesktop,
 			cls: "tikz-preamble-group",
 			items: [
 				{
@@ -189,6 +221,7 @@ export class TikzSettingTab extends PluginSettingTab {
 		return {
 			type: "group",
 			heading: "Security",
+			visible: this.isDesktop,
 			items: [
 				{
 					name: "Vault content is untrusted",
@@ -215,6 +248,7 @@ export class TikzSettingTab extends PluginSettingTab {
 		return {
 			type: "group",
 			heading: "Performance and cache",
+			visible: this.isDesktop,
 			items: [
 				{
 					name: "Compile timeout",
@@ -270,7 +304,7 @@ export class TikzSettingTab extends PluginSettingTab {
 				{
 					name: "Clear cached diagrams",
 					action: () => {
-						void this.cache.clear().then((removed) => {
+						void this.desktop?.cache.clear().then((removed) => {
 							new Notice(`Cleared ${removed} cached file(s).`);
 							this.update();
 						});
@@ -278,15 +312,105 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Reveal cache folder",
-					action: () => this.plugin.revealPath(this.cache.directory),
+					action: () => {
+						const desktop = this.desktop;
+						if (desktop) desktop.revealPath(desktop.cache.directory);
+					},
 				},
 			],
 		};
 	}
 
+	private mobileGroup(): SettingDefinitionItem {
+		const sharing = (): boolean => this.plugin.settings.shareWithMobile;
+		return {
+			type: "group",
+			heading: "Mobile",
+			items: [
+				{
+					name: "Share diagrams with mobile",
+					desc:
+						"Phones cannot run TeX. When on, this desktop keeps a copy of every diagram in your notes as " +
+						"an SVG in the shared folder below, a normal vault folder that Obsidian Sync, git or Syncthing " +
+						"carry to your phone, where the plugin displays it. Off by default because it adds visible " +
+						"files to your vault. Turning it off asks whether to delete them.",
+					aliases: ["phone", "sync", "ios", "android", "tablet"],
+					visible: this.isDesktop,
+					control: { type: "toggle", key: "shareWithMobile" },
+				},
+				{
+					name: "Diagrams on this device",
+					desc:
+						"This device cannot compile TikZ. It shows the diagrams a desktop puts in the shared folder " +
+						"(turn on “Share diagrams with mobile” there); anything not shared yet shows as “not rendered yet”.",
+					visible: () => !this.isDesktop(),
+				},
+				{
+					name: "Shared folder",
+					desc:
+						"Vault folder for shared diagrams. It must be a visible folder outside the config folder, " +
+						"because sync services skip hidden ones. Use the same folder on every device. Turn sharing " +
+						"off to change it.",
+					control: {
+						type: "text",
+						key: "sharedFolder",
+						placeholder: "TikZ cache",
+						disabled: sharing,
+						validate: (value) => {
+							const check = validateSharedFolder(value, this.app.vault.configDir);
+							return check.ok ? undefined : check.error;
+						},
+					},
+				},
+				{
+					name: "Shared diagrams",
+					desc: "Diagrams currently in the shared folder.",
+					render: (setting) => this.renderSharedStatus(setting),
+				},
+				{
+					name: "Update shared diagrams now",
+					desc: "Adds diagrams already rendered on this desktop and removes ones no note uses any more. Also runs once at startup.",
+					visible: () => this.isDesktop() && sharing(),
+					action: () => {
+						void this.plugin.runSharedSync(true).then(() => this.update());
+					},
+				},
+				{
+					name: "Render all for mobile",
+					desc: "Compiles every diagram that has never been rendered on this desktop, so your phone can show it without you opening each note here. Runs in the background.",
+					visible: () => this.isDesktop() && sharing(),
+					action: () => {
+						void this.plugin.renderAllForMobile().then(() => this.update());
+					},
+				},
+				{
+					name: "Delete shared diagrams",
+					desc: "Removes the shared SVGs (only those; other files in the folder are kept). Synced devices lose them too.",
+					visible: () => !sharing() && this.plugin.shared.list().length > 0,
+					action: () => {
+						void this.plugin.deleteSharedDiagrams().then(() => this.update());
+					},
+				},
+			],
+		};
+	}
+
+	private renderSharedStatus(setting: Setting): void {
+		const count = this.plugin.shared.list().length;
+		const folder = this.plugin.shared.folderPath;
+		const report = this.plugin.sharedSync?.lastReport;
+		const summary = `${count} diagram(s) in “${folder}”.`;
+		setting
+			.setName("Shared diagrams")
+			.setDesc(report ? `${summary} Last update: ${describeSyncReport(report)}.` : summary);
+	}
+
 	/** Status lines for the engine and dvisvgm, computed each time the row renders. */
 	private renderBinaryStatus(setting: Setting): void {
+		const desktop = this.desktop;
+		if (!desktop) return;
 		const settings = this.plugin.settings;
+		const { describeResolution } = desktop;
 		const resolutions = [
 			{
 				label: settings.engine,
@@ -322,9 +446,11 @@ export class TikzSettingTab extends PluginSettingTab {
 
 	/** "Detect automatically" for either binary: fills in the path on success. */
 	private async detect(which: "engine" | "dvisvgm"): Promise<void> {
+		const desktop = this.desktop;
+		if (!desktop) return;
 		const name = which === "engine" ? this.plugin.settings.engine : "dvisvgm";
 		const notice = new Notice(`Looking for ${name}…`, 0);
-		const found = await detectBinaryViaLoginShell(name);
+		const found = await desktop.detectBinaryViaLoginShell(name);
 		notice.hide();
 
 		if (!found) {
@@ -337,7 +463,9 @@ export class TikzSettingTab extends PluginSettingTab {
 	}
 
 	private async updateCacheSummary(setting: Setting): Promise<void> {
-		const stats = await this.cache.stats();
+		const desktop = this.desktop;
+		if (!desktop) return;
+		const stats = await desktop.cache.stats();
 		const kilobytes = Math.round(stats.bytes / 1024);
 		setting.setDesc(
 			`${stats.entries} cached diagram(s), ${kilobytes} KB. Rendered SVGs are cached by content hash, so unchanged blocks never recompile.`,

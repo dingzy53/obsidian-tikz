@@ -1,7 +1,8 @@
 /**
  * Content-addressed disk cache for rendered diagrams.
  *
- * Pure Node module: no `import "obsidian"` (AGENTS.md). Callers pass in the
+ * Plain Node module: no `import "obsidian"` (AGENTS.md); Node itself comes
+ * from `nodeApi()`, provided once on desktop (AGENTS.md rule 1). Callers pass in the
  * cache directory (which lives under the plugin's own hidden folder, so
  * nothing ever appears in the vault's file explorer).
  *
@@ -11,9 +12,8 @@
  * human-inspectable and trivially clearable.
  */
 
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { nodeApi } from "./nodeApi";
+
 
 /**
  * Bumped whenever the *rendering pipeline* changes in a way that invalidates
@@ -43,7 +43,8 @@ export interface CacheKeyInput {
  * post-process, so flipping that setting never forces a recompile.
  */
 export function computeCacheKey(input: CacheKeyInput): string {
-	const hash = createHash("sha256");
+	const { crypto } = nodeApi();
+	const hash = crypto.createHash("sha256");
 	hash.update(`v${CACHE_VERSION}\u0000`);
 	hash.update(`${input.engine}\u0000`);
 	hash.update(`${input.source}\u0000`);
@@ -68,15 +69,18 @@ export class DiagramCache {
 	}
 
 	async ensureDir(): Promise<void> {
+		const { fsp } = nodeApi();
 		await fsp.mkdir(this.dir, { recursive: true });
 	}
 
 	private svgPath(key: string): string {
+		const { path } = nodeApi();
 		return path.join(this.dir, `${key}.svg`);
 	}
 
 	/** Returns the cached SVG, or null on a miss. A hit counts as a use. */
 	async get(key: string): Promise<string | null> {
+		const { fsp } = nodeApi();
 		const file = this.svgPath(key);
 		try {
 			const svg = await fsp.readFile(file, "utf8");
@@ -94,6 +98,7 @@ export class DiagramCache {
 	 * when the entry is already fresh, to avoid a write on every render.
 	 */
 	private async touch(file: string): Promise<void> {
+		const { fsp } = nodeApi();
 		try {
 			const stat = await fsp.stat(file);
 			if (Date.now() - stat.mtimeMs < TOUCH_INTERVAL_MS) return;
@@ -105,6 +110,7 @@ export class DiagramCache {
 	}
 
 	async set(key: string, svg: string): Promise<void> {
+		const { fsp } = nodeApi();
 		await this.ensureDir();
 		await fsp.writeFile(this.svgPath(key), svg, "utf8");
 		await this.sweep();
@@ -116,6 +122,7 @@ export class DiagramCache {
 	 * accumulated.
 	 */
 	async purgeLegacyLogs(): Promise<number> {
+		const { fsp, path } = nodeApi();
 		let names: string[];
 		try {
 			names = await fsp.readdir(this.dir);
@@ -137,6 +144,7 @@ export class DiagramCache {
 
 	/** Deletes every cached SVG (and any legacy log). Returns the number of files removed. */
 	async clear(): Promise<number> {
+		const { fsp, path } = nodeApi();
 		let names: string[];
 		try {
 			names = await fsp.readdir(this.dir);
@@ -158,6 +166,7 @@ export class DiagramCache {
 	}
 
 	async stats(): Promise<CacheStats> {
+		const { fsp, path } = nodeApi();
 		let names: string[];
 		try {
 			names = await fsp.readdir(this.dir);
@@ -185,6 +194,7 @@ export class DiagramCache {
 	 * recently used SVGs (hits refresh the modification time).
 	 */
 	async sweep(): Promise<void> {
+		const { fsp, path } = nodeApi();
 		if (this.maxEntries <= 0) return;
 
 		let names: string[];

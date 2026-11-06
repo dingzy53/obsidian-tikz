@@ -388,4 +388,25 @@ describe("prepareSvgForDisplay", () => {
 		const hostile = `<svg><script>alert(1)</script><g fill='#000'/></svg>`;
 		expect(prepareSvgForDisplay(hostile, "p-", "off", true)).not.toContain("script");
 	});
+
+	it("gives the viewer's copy ids disjoint from the inline copy's", () => {
+		// Both copies are in the document while the viewer is open; a shared id
+		// would let one diagram's <use> resolve to the other's glyph.
+		const ids = (svg: string): string[] =>
+			[...svg.matchAll(/\bid=["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+		const inline = ids(prepareSvgForDisplay(DVISVGM_SVG, "tikz-abcd1234-"));
+		const viewer = ids(prepareSvgForDisplay(DVISVGM_SVG, "tikz-zoom-abcd1234-"));
+		expect(inline.length).toBeGreaterThan(0);
+		expect(viewer.length).toBe(inline.length);
+		expect(viewer.filter((id) => inline.includes(id))).toEqual([]);
+	});
+
+	it("keeps the viewBox and absolute dimensions the viewer sizes from", () => {
+		// SVGO may rewrite `pt` to unitless px; either is an absolute length,
+		// which `SVGLength.value` converts without layout. A percentage is not.
+		const out = prepareSvgForDisplay(DVISVGM_SVG, "p-");
+		expect(out).toMatch(/viewBox="-43\.4 -44\.3 33\.4 8\.2"/);
+		expect(out).toMatch(/width="[\d.]+(pt)?"/);
+		expect(out).toMatch(/height="[\d.]+(pt)?"/);
+	});
 });

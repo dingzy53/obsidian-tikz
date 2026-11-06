@@ -3,13 +3,9 @@
  * what ends up in `data.json` can be unit-tested.
  */
 
-import {
-	DEFAULT_ENGINE,
-	DEFAULT_PREAMBLE,
-	DEFAULT_TIMEOUT_SECONDS,
-	ENGINE_IDS,
-	type EngineId,
-} from "./compiler";
+import { DEFAULT_ENGINE, DEFAULT_TIMEOUT_SECONDS, ENGINE_IDS, type EngineId } from "./compiler/engineSpecs";
+import { DEFAULT_PREAMBLE } from "./compiler/wrapSource";
+import { DEFAULT_SHARED_FOLDER, validateSharedFolder } from "./shared/folder";
 import type { ColorAdaptation } from "./svg";
 
 export interface TikzSettings {
@@ -38,6 +34,15 @@ export interface TikzSettings {
 	colorAdaptation: ColorAdaptation;
 	/** 0 = unlimited. */
 	maxCacheEntries: number;
+	/** Clicking a diagram (or Enter on it) opens the zoomable viewer. */
+	zoomOnClick: boolean;
+	/**
+	 * Opt-in (AGENTS.md rule 2): mirror every diagram into {@link sharedFolder},
+	 * a normal vault folder, so a sync service can carry it to a phone.
+	 */
+	shareWithMobile: boolean;
+	/** Vault-relative folder for shared diagrams. */
+	sharedFolder: string;
 }
 
 export const DEFAULT_SETTINGS: TikzSettings = {
@@ -51,6 +56,9 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	maxConcurrentCompiles: 0,
 	colorAdaptation: "adaptive",
 	maxCacheEntries: 500,
+	zoomOnClick: true,
+	shareWithMobile: false,
+	sharedFolder: DEFAULT_SHARED_FOLDER,
 };
 
 const ADAPTATION_MODES: ColorAdaptation[] = ["adaptive", "light-canvas", "off"];
@@ -97,6 +105,11 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
 	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
 	merged.allowShellEscape = merged.allowShellEscape === true;
+	merged.zoomOnClick = typeof merged.zoomOnClick === "boolean" ? merged.zoomOnClick : DEFAULT_SETTINGS.zoomOnClick;
+	// Writing into the vault is opt-in, so only an explicit `true` turns it on.
+	merged.shareWithMobile = merged.shareWithMobile === true;
+	const folder = validateSharedFolder(merged.sharedFolder);
+	merged.sharedFolder = folder.ok ? folder.path : DEFAULT_SHARED_FOLDER;
 	// Retired in #4: the "Restrict file access" toggle set `openin_any=p`, which
 	// is a no-op since TeX Live 2026 and broke luaotfload before that. Drop the
 	// stale key so it does not linger in `data.json`.

@@ -28,6 +28,17 @@
 	color: #000000;
 }
 
+/* Click to enlarge (opens the viewer modal). */
+.tikz-container.tikz-zoomable {
+	cursor: zoom-in;
+}
+
+.tikz-container.tikz-zoomable:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+	border-radius: var(--radius-s);
+}
+
 .tikz-loading {
 	display: flex;
 	align-items: center;
@@ -35,6 +46,25 @@
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 	padding: 0.5em 0;
+}
+
+/* Mobile: no shared render for this block yet. Neutral, not an error. */
+.tikz-pending {
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background-color: var(--background-secondary);
+	padding: 0.75em;
+	font-size: var(--font-ui-small);
+}
+
+.tikz-pending-summary {
+	color: var(--text-normal);
+	font-weight: var(--font-semibold);
+}
+
+.tikz-pending-hint {
+	color: var(--text-muted);
+	margin-top: 0.4em;
 }
 
 .tikz-error {
@@ -110,4 +140,82 @@
 	width: 100%;
 	font-family: var(--font-monospace);
 	font-size: var(--font-smaller);
+}
+
+/* Diagram viewer */
+
+.modal.tikz-zoom-modal {
+	width: 90vw;
+	height: 85vh;
+	max-width: none;
+	max-height: none;
+	display: flex;
+	flex-direction: column;
+}
+
+.tikz-zoom-modal .modal-content {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.tikz-zoom-toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	/* Leave room for the modal's close button in the top-right corner. */
+	padding-right: var(--size-4-8);
+}
+
+.tikz-zoom-level {
+	min-width: 4em;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.tikz-zoom-actual {
+	font-size: var(--font-ui-small);
+	margin-left: var(--size-4-2);
+}
+
+.tikz-zoom-viewport {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background-color: var(--background-primary);
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+}
+
+.tikz-zoom-viewport.is-dragging {
+	cursor: grabbing;
+}
+
+.tikz-zoom-stage {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+	/* Set per frame by zoomModal.ts. */
+	transform: translate(var(--tikz-zoom-x, 0px), var(--tikz-zoom-y, 0px));
+}
+
+.tikz-zoom-stage.tikz-light-canvas {
+	background-color: #ffffff;
+	color: #000000;
+}
+
+.tikz-zoom-stage svg {
+	display: block;
+	max-width: none;
+	width: var(--tikz-zoom-width, auto);
+	height: var(--tikz-zoom-height, auto);
 }

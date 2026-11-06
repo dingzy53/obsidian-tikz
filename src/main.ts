@@ -1,43 +1,58 @@
-import { FileSystemAdapter, Notice, Plugin } from "obsidian";
-import * as path from "node:path";
-import { DiagramCache } from "./cache";
-import { sweepScratchDirs } from "./compiler";
+import { Notice, Platform, Plugin } from "obsidian";
+import type { DesktopServices } from "./desktop";
 import { registerTikzProcessor, type TikzRenderer } from "./render";
 import { DEFAULT_SETTINGS, mergeSettings, TikzSettingTab, type TikzSettings } from "./settings";
+import { SharedCleanupModal, SharedSync, describeSyncReport } from "./sharedSync";
+import { SharedDiagramStore } from "./sharedStore";
+import { DiagramZoomModal } from "./zoomModal";
+
+/** Delay before the once-per-session shared folder sync, so startup stays quick. */
+const STARTUP_SYNC_DELAY_MS = 10_000;
 
 export default class TikzPlugin extends Plugin {
 	settings: TikzSettings = { ...DEFAULT_SETTINGS };
-	cache!: DiagramCache;
-	/** Absolute path of this plugin's own folder. */
-	pluginDir = "";
+	/**
+	 * Compiler, local cache and other Node/Electron services. Undefined on
+	 * mobile, where Node does not exist: the plugin then only displays
+	 * diagrams from the shared folder (AGENTS.md rule 1).
+	 */
+	desktop: DesktopServices | undefined;
+	shared!: SharedDiagramStore;
+	/** Desktop only. */
+	sharedSync: SharedSync | undefined;
 	private renderer: TikzRenderer | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.pluginDir = this.resolvePluginDir();
-		this.cache = new DiagramCache(
-			path.join(this.pluginDir, "cache"),
-			this.settings.maxCacheEntries,
-		);
-		await this.cache.ensureDir().catch((error: unknown) => {
-			console.error("[tikz] Could not create the cache directory.", error);
-		});
-		void this.cache.purgeLegacyLogs().catch(() => undefined);
+		// `isDesktop`, not `isDesktopApp`: Obsidian sets it only in the desktop
+		// app, and mobile emulation (`dev:mobile on`) clears it again while
+		// leaving `isDesktopApp` true and handing plugins `null` for every Node
+		// module (checked in 1.15's app.js). It is also the guard Obsidian's
+		// review lint looks for.
+		if (Platform.isDesktop) {
+			// A dynamic import keeps every Node `require` out of the bundle's
+			// top level (see `desktop.ts`).
+			const { createDesktopServices } = await import("./desktop");
+			this.desktop = await createDesktopServices(this.app, this.manifest, this.settings.maxCacheEntries);
+			void this.desktop.sweepScratchDirs().catch(() => undefined);
+		}
 
-		// Scratch directories from an interrupted session are not in use any
-		// more (plan §6.3). Failures are kept for the "Reveal build folder"
-		// affordance, so only stale ones are removed.
-		void sweepScratchDirs().catch(() => undefined);
+		this.shared = new SharedDiagramStore(this.app, () => this.settings.sharedFolder);
+		this.shared.registerEvents((ref) => this.registerEvent(ref));
+		if (this.desktop) {
+			this.sharedSync = new SharedSync(this.app, this.desktop, this.shared, () => this.settings);
+		}
 
 		this.addSettingTab(new TikzSettingTab(this.app, this));
 		this.addSyntaxHighlighting();
 
 		this.renderer = registerTikzProcessor(this, {
 			getSettings: () => this.settings,
-			cache: this.cache,
+			desktop: this.desktop,
+			shared: this.shared,
 			openSettings: () => this.openSettings(),
-			revealPath: (target) => this.revealPath(target),
+			openZoom: (svg, lightCanvas) => new DiagramZoomModal(this.app, svg, lightCanvas).open(),
 		});
 
 		// `adaptive` colour handling depends on whether the theme is dark, so a
@@ -48,9 +63,19 @@ export default class TikzPlugin extends Plugin {
 				this.refreshAllDiagrams();
 			}),
 		);
+
+		// Catch up once per session: notes edited elsewhere (or while sharing
+		// was handled by another desktop) leave the folder out of date.
+		this.app.workspace.onLayoutReady(() => {
+			const timer = window.setTimeout(() => {
+				if (this.settings.shareWithMobile) void this.runSharedSync(false);
+			}, STARTUP_SYNC_DELAY_MS);
+			this.register(() => window.clearTimeout(timer));
+		});
 	}
 
 	onunload(): void {
+		this.sharedSync?.stop();
 		this.removeSyntaxHighlighting();
 	}
 
@@ -61,7 +86,21 @@ export default class TikzPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 		// Mutating the existing cache keeps the renderer's reference valid.
-		this.cache.maxEntries = this.settings.maxCacheEntries;
+		if (this.desktop) this.desktop.cache.maxEntries = this.settings.maxCacheEntries;
+	}
+
+	/**
+	 * `data.json` changed on disk, usually because a sync service delivered
+	 * settings from another device. Applied live, so for example a phone picks
+	 * up a changed shared folder without a restart.
+	 */
+	async onExternalSettingsChange(): Promise<void> {
+		const before = this.settings;
+		await this.loadSettings();
+		if (this.desktop) this.desktop.cache.maxEntries = this.settings.maxCacheEntries;
+		if (before.shareWithMobile && !this.settings.shareWithMobile) this.sharedSync?.stop();
+		if (before.sharedFolder !== this.settings.sharedFolder) this.reloadSharedDiagrams();
+		this.refreshAllDiagrams();
 	}
 
 	/** Re-applies display-time post-processing (e.g. after a dark-mode toggle). */
@@ -69,20 +108,61 @@ export default class TikzPlugin extends Plugin {
 		this.renderer?.refreshAll();
 	}
 
-	/**
-	 * The plugin folder is the only place this plugin is allowed to write
-	 * (AGENTS.md rule 2). `manifest.dir` is vault-relative, so it is joined
-	 * with the vault's absolute base path.
-	 */
-	private resolvePluginDir(): string {
-		const adapter = this.app.vault.adapter;
-		const relative = this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`;
-		if (adapter instanceof FileSystemAdapter) {
-			return path.join(adapter.getBasePath(), relative);
+	/** Mobile: the shared folder setting changed, so every block looks again. */
+	reloadSharedDiagrams(): void {
+		this.renderer?.reloadShared();
+	}
+
+	/** Desktop: brings the shared folder up to date. `notify` reports the result. */
+	async runSharedSync(notify: boolean): Promise<void> {
+		if (!this.sharedSync) return;
+		try {
+			const report = await this.sharedSync.syncNow();
+			if (notify) new Notice(`Shared diagrams: ${describeSyncReport(report)}.`);
+		} catch (error) {
+			console.error("[tikz] Updating the shared diagrams failed.", error);
+			new Notice("Could not update the shared diagrams; see the developer console.");
 		}
-		// Desktop-only plugin: anything else means an unexpected environment.
-		console.warn("[tikz] Unexpected vault adapter; falling back to the relative plugin path.");
-		return relative;
+	}
+
+	/** Desktop: compiles every diagram that has no shared file yet. */
+	async renderAllForMobile(): Promise<void> {
+		if (!this.sharedSync) return;
+		try {
+			const report = await this.sharedSync.renderAllMissing();
+			const parts = [`${report.rendered} rendered`];
+			if (report.failed) parts.push(`${report.failed} failed (open those notes to see the error)`);
+			if (report.cancelled) parts.push("stopped early");
+			new Notice(`Render all for mobile: ${parts.join(", ")}.`);
+		} catch (error) {
+			console.error("[tikz] Rendering diagrams for mobile failed.", error);
+			new Notice("Rendering diagrams for mobile failed; see the developer console.");
+		}
+	}
+
+	/**
+	 * Sharing was just turned off: stop any running pass, then let the user
+	 * decide what happens to the files already in the vault.
+	 */
+	confirmSharedCleanup(onDone: () => void): void {
+		this.sharedSync?.stop();
+		const count = this.shared.list().length;
+		if (count === 0) {
+			onDone();
+			return;
+		}
+		new SharedCleanupModal(this.app, count, this.shared.folderPath, (deleteFiles) => {
+			if (!deleteFiles) {
+				onDone();
+				return;
+			}
+			void this.deleteSharedDiagrams().finally(onDone);
+		}).open();
+	}
+
+	async deleteSharedDiagrams(): Promise<void> {
+		const removed = await this.shared.deleteAll();
+		new Notice(`Deleted ${removed} shared diagram(s).`);
 	}
 
 	private openSettings(): void {
@@ -96,21 +176,6 @@ export default class TikzPlugin extends Plugin {
 			app.setting.openTabById(this.manifest.id);
 		} else {
 			new Notice("Open Settings → Community plugins → TikZ to change the options.");
-		}
-	}
-
-	/** Opens a file or folder in the OS file manager. */
-	revealPath(target: string): void {
-		try {
-			// `electron` only exists in the desktop host, so require it lazily
-			// and defensively: a top-level import would turn any resolution
-			// failure into a plugin that refuses to load at all.
-			// eslint-disable-next-line @typescript-eslint/no-require-imports -- `electron` resolves only inside Obsidian's desktop host, so it cannot be a static import
-			const electron = require("electron") as { shell?: { openPath(path: string): Promise<string> } };
-			void electron.shell?.openPath(target);
-		} catch (error) {
-			console.error("[tikz] Could not open the path.", error);
-			new Notice(`Path: ${target}`);
 		}
 	}
 

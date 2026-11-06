@@ -2,7 +2,8 @@
  * Compile a TikZ source string into an SVG by shelling out to a local TeX
  * distribution.
  *
- * Pure Node module: no `import "obsidian"` (AGENTS.md), so the whole
+ * Plain Node module: no `import "obsidian"` (AGENTS.md); Node itself comes
+ * from `nodeApi()`, provided once on desktop (AGENTS.md rule 1). So the whole
  * "string in → {svg} | {error, log} out" contract is testable headlessly
  * (plan §M1) and reusable if a general `latex` fence is added later.
  *
@@ -11,14 +12,8 @@
  *   2. dvisvgm     → .svg
  */
 
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-// Imported explicitly: this module is plain Node (no `window`), and the explicit
-// binding keeps it clear that these are Node timers, not browser ones.
-import { clearTimeout, setTimeout } from "node:timers";
+import type { ChildProcess } from "node:child_process";
+import { nodeApi } from "../nodeApi";
 import {
 	BinaryNotFoundError,
 	buildHostSpawn,
@@ -30,126 +25,29 @@ import {
 } from "./pathResolve";
 import { normalizePreamble, wrapTikzSource } from "./wrapSource";
 
-export type EngineId = "dvilualatex" | "latex" | "xelatex" | "pdflatex";
+import {
+	DEFAULT_TIMEOUT_SECONDS,
+	ENGINE_SPECS,
+	type CompileFailure,
+	type CompileFailureKind,
+	type CompileOptions,
+	type CompileResult,
+	type EngineId,
+} from "./engineSpecs";
 
-export const ENGINE_IDS: readonly EngineId[] = ["dvilualatex", "latex", "xelatex", "pdflatex"];
-
-/**
- * Default engine, validated empirically against TeX Live 2026 + dvisvgm 3.6
- * (plan §14 open question #1 — see README "Verified facts"):
- * `dvilualatex` matched `latex` on every DVI case and additionally handles
- * `fontspec`/system fonts, so it is a strict superset for this use case.
- */
-export const DEFAULT_ENGINE: EngineId = "dvilualatex";
-
-export const DEFAULT_TIMEOUT_SECONDS = 20;
-
-export interface EngineSpec {
-	/** Label for the settings dropdown. */
-	label: string;
-	/** Intermediate artifact produced by stage 1. */
-	artifactExt: "dvi" | "xdv" | "pdf";
-	/** Whether pgf must be told to emit dvisvgm specials (see PGF_DRIVER_LINE). */
-	injectDvisvgmDriver: boolean;
-	/** Extra arguments for the tex engine. */
-	engineArgs: string[];
-	/** Extra arguments for dvisvgm. */
-	dvisvgmArgs: string[];
-}
-
-export const ENGINE_SPECS: Record<EngineId, EngineSpec> = {
-	dvilualatex: {
-		label: "LuaLaTeX → DVI (recommended)",
-		artifactExt: "dvi",
-		injectDvisvgmDriver: true,
-		engineArgs: [],
-		dvisvgmArgs: [],
-	},
-	latex: {
-		label: "LaTeX → DVI (most battle-tested, no system fonts)",
-		artifactExt: "dvi",
-		injectDvisvgmDriver: true,
-		engineArgs: [],
-		dvisvgmArgs: [],
-	},
-	xelatex: {
-		label: "XeLaTeX → XDV (system fonts)",
-		artifactExt: "xdv",
-		injectDvisvgmDriver: true,
-		engineArgs: ["-no-pdf"],
-		dvisvgmArgs: [],
-	},
-	pdflatex: {
-		label: "pdfLaTeX → PDF (experimental: see README)",
-		artifactExt: "pdf",
-		injectDvisvgmDriver: false,
-		engineArgs: [],
-		// `dvisvgm --pdf` needs Ghostscript/mutool support and is known to drop
-		// vector objects (dvisvgm#139/#150). Kept as an opt-in fallback only.
-		dvisvgmArgs: ["--pdf"],
-	},
-};
-
-export type CompileFailureKind =
-	| "binary-not-found"
-	| "compile-error"
-	| "timeout"
-	| "dvisvgm-error"
-	| "io-error"
-	| "internal";
-
-export interface CompileOptions {
-	/** Raw code-block content, untrusted. */
-	source: string;
-	/** Resolved default preamble from settings. */
-	preamble: string;
-	engine: EngineId;
-	/** Explicit engine path from settings; empty → auto-detect. */
-	enginePath?: string;
-	/** Explicit dvisvgm path from settings; empty → auto-detect. */
-	dvisvgmPath?: string;
-	/** Extra directories prepended to the child `PATH`. */
-	extraPathDirs?: string[];
-	/** Opt-in `\write18` support. Off by default (AGENTS.md rule 3). */
-	allowShellEscape?: boolean;
-	/** Per-stage timeout. Defaults to {@link DEFAULT_TIMEOUT_SECONDS}. */
-	timeoutMs?: number;
-	/** Scratch directory. A fresh one under `os.tmpdir()` is used by default. */
-	workDir?: string;
-	/** Base name of the generated files. */
-	jobName?: string;
-	/** Keep the scratch directory even on success (debugging). */
-	keepWorkDirOnSuccess?: boolean;
-}
-
-export interface CompileSuccess {
-	ok: true;
-	svg: string;
-	/** Full compiler log (kept for the debug affordance / tests). */
-	log: string;
-	/** The exact document that was compiled. */
-	tex: string;
-	durationMs: number;
-	enginePath: string;
-	dvisvgmPath: string;
-	workDir: string;
-}
-
-export interface CompileFailure {
-	ok: false;
-	kind: CompileFailureKind;
-	/** Short human-readable line for the error block header. */
-	summary: string;
-	/** Actionable follow-up, when we can tell what went wrong. */
-	hint?: string;
-	log: string;
-	tex: string;
-	durationMs: number;
-	/** Retained on failure so the user can inspect the inputs. */
-	workDir: string;
-}
-
-export type CompileResult = CompileSuccess | CompileFailure;
+export {
+	DEFAULT_ENGINE,
+	DEFAULT_TIMEOUT_SECONDS,
+	ENGINE_IDS,
+	ENGINE_SPECS,
+	type CompileFailure,
+	type CompileFailureKind,
+	type CompileOptions,
+	type CompileResult,
+	type CompileSuccess,
+	type EngineId,
+	type EngineSpec,
+} from "./engineSpecs";
 
 /** Cap on captured process output (in characters), so a runaway log cannot blow up the DOM. */
 const MAX_CAPTURE_CHARS = 1024 * 1024;
@@ -166,11 +64,12 @@ interface ProcessResult {
 }
 
 /** Kills a process and its children. `detached` gives us a killable group. */
-function killProcessTree(pid: number | undefined, child: ReturnType<typeof spawn>): void {
+function killProcessTree(pid: number | undefined, child: ChildProcess): void {
+	const { childProcess } = nodeApi();
 	if (pid === undefined) return;
 	if (process.platform === "win32") {
 		try {
-			const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+			const killer = childProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
 			// Without a listener a failed spawn (taskkill missing from PATH)
 			// would surface as an uncaught 'error' event.
 			killer.on("error", () => {
@@ -213,6 +112,8 @@ function runProcess(
 		extraDirs?: string[];
 	},
 ): Promise<ProcessResult> {
+	// Node timers (not `window`'s): this module is plain Node.
+	const { childProcess, timers } = nodeApi();
 	return new Promise((resolve) => {
 		let stdout = "";
 		let stderr = "";
@@ -225,9 +126,9 @@ function runProcess(
 		const spawnCmd = host ? host.command : command;
 		const spawnArgs = host ? host.args : args;
 
-		let child: ReturnType<typeof spawn>;
+		let child: ChildProcess;
 		try {
-			child = spawn(spawnCmd, spawnArgs, {
+			child = childProcess.spawn(spawnCmd, spawnArgs, {
 				cwd: options.cwd,
 				env: options.env,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -265,7 +166,7 @@ function runProcess(
 			stderr = append(stderr, chunk);
 		});
 
-		const timer = setTimeout(() => {
+		const timer = timers.setTimeout(() => {
 			timedOut = true;
 			killProcessTree(child.pid, child);
 		}, options.timeoutMs);
@@ -273,7 +174,7 @@ function runProcess(
 		const finish = (result: ProcessResult): void => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			timers.clearTimeout(timer);
 			resolve(result);
 		};
 
@@ -374,6 +275,7 @@ function joinLog(parts: (string | null | undefined)[]): string {
 }
 
 async function readIfExists(file: string): Promise<string | null> {
+	const { fsp } = nodeApi();
 	try {
 		return await fsp.readFile(file, "utf8");
 	} catch {
@@ -383,7 +285,8 @@ async function readIfExists(file: string): Promise<string | null> {
 
 /** Fresh scratch directory, always outside the vault. */
 export function createWorkDir(): string {
-	return path.join(scratchRoot(), `${Date.now()}-${randomUUID().slice(0, 8)}`);
+	const { crypto, path } = nodeApi();
+	return path.join(scratchRoot(), `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
 }
 
 /**
@@ -392,6 +295,7 @@ export function createWorkDir(): string {
  * touched, so a compile running in a second Obsidian window survives.
  */
 export async function sweepScratchDirs(maxAgeMs = 60 * 60 * 1000): Promise<number> {
+	const { fsp, path } = nodeApi();
 	const root = scratchRoot();
 	let removed = 0;
 	let entries: string[];
@@ -444,6 +348,7 @@ export async function compileTikz(options: CompileOptions): Promise<CompileResul
 }
 
 async function compileTikzUnsafe(options: CompileOptions, started: number): Promise<CompileResult> {
+	const { fs, fsp, path } = nodeApi();
 	const spec = ENGINE_SPECS[options.engine];
 	const jobName = options.jobName ?? "diagram";
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
