@@ -23,11 +23,11 @@ describe("mergeSettings", () => {
 		expect(mergeSettings({ allowShellEscape: true }).allowShellEscape).toBe(true);
 	});
 
-	it("restricts file access unless explicitly opted out", () => {
-		expect(DEFAULT_SETTINGS.restrictFileAccess).toBe(true);
-		expect(mergeSettings({}).restrictFileAccess).toBe(true);
-		expect(mergeSettings({ restrictFileAccess: "no" }).restrictFileAccess).toBe(true);
-		expect(mergeSettings({ restrictFileAccess: false }).restrictFileAccess).toBe(false);
+	it("drops the retired restrictFileAccess key from stored data (issue #4)", () => {
+		expect("restrictFileAccess" in DEFAULT_SETTINGS).toBe(false);
+		expect("restrictFileAccess" in mergeSettings({ restrictFileAccess: true })).toBe(false);
+		expect("restrictFileAccess" in mergeSettings({ restrictFileAccess: false })).toBe(false);
+		expect(applySettingChange(DEFAULT_SETTINGS, "restrictFileAccess", true)).toBe(DEFAULT_SETTINGS);
 	});
 
 	it("rejects an unknown engine", () => {

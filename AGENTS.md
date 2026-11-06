@@ -59,8 +59,9 @@ two. Do not publish a release only for these changes.
 7. **SVG output is untrusted.** `optimizeSVG` must keep failing closed
    (`SvgRejectedError`) and `render.ts` must insert via `DOMParser`/`importNode`,
    never `innerHTML`. Widen the element allowlist rather than relaxing it.
-8. **File reads stay restricted by default.** TeX runs with `openin_any=p`
-   unless the user opts out via the "Restrict file access" setting.
+8. **Don't claim a TeX read sandbox.** TeX can read any file the user can.
+   `openin_any` is a no-op since TeX Live 2026 and broke luaotfload before
+   that (#4), so don't reintroduce it or advertise read restriction.
 9. Plugin `id` in `manifest.json`: lowercase + hyphens only, must not contain
    `"obsidian"`, must not end in `"plugin"` (Obsidian manifest validation
    will reject it otherwise).

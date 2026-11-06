@@ -207,14 +207,6 @@ export class TikzSettingTab extends PluginSettingTab {
 					desc: "Passes -shell-escape to the TeX engine. Off by default, and it should stay off.",
 					control: { type: "toggle", key: "allowShellEscape" },
 				},
-				{
-					name: "Restrict file access",
-					desc:
-						"Runs TeX with openin_any=p, so a diagram cannot read files outside its build folder " +
-						"(for example \\input{~/.ssh/config}). The side effect: \\includegraphics and \\input " +
-						"with an absolute path stop working. Turn off only for vaults you trust.",
-					control: { type: "toggle", key: "restrictFileAccess" },
-				},
 			],
 		};
 	}

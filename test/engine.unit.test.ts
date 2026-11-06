@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compileTikz } from "../src/compiler";
+import { deriveHint } from "../src/compiler/engine";
 
 /**
  * Exercises the process plumbing with stand-in executables, so the failure
@@ -49,17 +50,17 @@ describe.skipIf(!posix)("compileTikz process handling", () => {
 		}
 	});
 
-	it("runs TeX with openin_any=p by default, and not when opted out", async () => {
-		const engine = script("env-engine", `echo "openin_any=[$openin_any]" >&2\nexit 1`);
-		const restricted = await compileTikz({ ...base, enginePath: engine, dvisvgmPath: okDvisvgm });
-		const open = await compileTikz({
-			...base,
-			enginePath: engine,
-			dvisvgmPath: okDvisvgm,
-			restrictFileAccess: false,
-		});
-		expect(restricted.ok || restricted.log).toContain("openin_any=[p]");
-		expect(open.ok || open.log).toContain("openin_any=[]");
+	it("does not set openin_any for TeX (issue #4)", async () => {
+		const saved = process.env.openin_any;
+		delete process.env.openin_any;
+		try {
+			const engine = script("env-engine", `echo "openin_any=[$openin_any]" >&2\nexit 1`);
+			const result = await compileTikz({ ...base, enginePath: engine, dvisvgmPath: okDvisvgm });
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.log).toContain("openin_any=[]");
+		} finally {
+			if (saved !== undefined) process.env.openin_any = saved;
+		}
 	});
 
 	it("kills a hung engine and reports a timeout", async () => {
@@ -84,5 +85,22 @@ describe.skipIf(!posix)("compileTikz process handling", () => {
 			dvisvgmPath: okDvisvgm,
 		});
 		expect(result).toMatchObject({ ok: false, kind: "internal" });
+	});
+});
+
+describe("deriveHint", () => {
+	it("explains the luaotfload failure that openin_any=p causes on TeX Live 2025 (issue #4)", () => {
+		const log = [
+			"luaotfload | load : FATAL ERROR",
+			'luaotfload | load :   × Failed to load "luaotfload" module "multiscript".',
+			"luaotfload | load :     × \"...luaotfload-multiscript.lua:70: attempt to index a nil value (local 'f')\".",
+		].join("\n");
+		expect(deriveHint(log, "dvilualatex")).toContain("openin_any");
+	});
+
+	it("no longer blames a file-access setting for a missing absolute path", () => {
+		const hint = deriveHint("! LaTeX Error: File `/home/u/secret.tex' not found.", "dvilualatex");
+		expect(hint).not.toContain("Restrict file access");
+		expect(hint).toContain("/home/u/secret.tex");
 	});
 });

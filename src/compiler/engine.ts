@@ -112,12 +112,6 @@ export interface CompileOptions {
 	extraPathDirs?: string[];
 	/** Opt-in `\write18` support. Off by default (AGENTS.md rule 3). */
 	allowShellEscape?: boolean;
-	/**
-	 * Run TeX with `openin_any=p` (paranoid), so a block cannot `\input` or
-	 * `\includegraphics` an arbitrary file such as `~/.ssh/config` and render
-	 * its contents into a note. On unless explicitly set to `false`.
-	 */
-	restrictFileAccess?: boolean;
 	/** Per-stage timeout. Defaults to {@link DEFAULT_TIMEOUT_SECONDS}. */
 	timeoutMs?: number;
 	/** Scratch directory. A fresh one under `os.tmpdir()` is used by default. */
@@ -217,8 +211,6 @@ function runProcess(
 		timeoutMs: number;
 		viaHost?: boolean;
 		extraDirs?: string[];
-		/** Variables to set on the host process (Flatpak only; others use `env`). */
-		hostEnv?: Record<string, string>;
 	},
 ): Promise<ProcessResult> {
 	return new Promise((resolve) => {
@@ -228,7 +220,7 @@ function runProcess(
 		let timedOut = false;
 
 		const host = options.viaHost
-			? buildHostSpawn(command, args, options.cwd, options.extraDirs, options.hostEnv)
+			? buildHostSpawn(command, args, options.cwd, options.extraDirs)
 			: null;
 		const spawnCmd = host ? host.command : command;
 		const spawnArgs = host ? host.args : args;
@@ -316,15 +308,18 @@ export function extractErrorSummary(log: string): string | null {
 }
 
 /** Turns a compiler log into an actionable hint, when we recognise the case. */
-export function deriveHint(
-	log: string,
-	engine: EngineId,
-	restrictedFiles = false,
-): string | undefined {
+export function deriveHint(log: string, engine: EngineId): string | undefined {
 	// TeX wraps log lines at ~79 columns, so a phrase like "not found" can be
 	// split across two lines. Collapse the newlines for the phrase checks;
 	// the line-anchored checks below use the original text.
 	const flat = log.replace(/\s*\n\s*/g, " ");
+
+	// TeX Live <= 2025 under `openin_any=p` (issue #4): luaotfload opens its
+	// data files by absolute path and paranoid mode refuses them. The plugin no
+	// longer sets it, so this only fires when the user's environment does.
+	if (/luaotfload[\s|]*load\s*:\s*FATAL ERROR/i.test(flat) && /multiscript/i.test(flat)) {
+		return "luaotfload could not open a file in your TeX tree; unset `openin_any` (or set it to `a`) in the environment Obsidian is started from.";
+	}
 
 	// LaTeX says "File `x' not found"; the bare \input primitive says "I can't find file `x'".
 	const missingFile = flat.match(
@@ -332,9 +327,6 @@ export function deriveHint(
 	);
 	if (missingFile) {
 		const file = missingFile[1] ?? missingFile[2];
-		if (restrictedFiles && /^(?:\/|~|[A-Za-z]:[\\/])/.test(file)) {
-			return `Reading "${file}" is blocked: file access outside the build folder is restricted so a note cannot read private files. Turn off "Restrict file access" in the plugin settings if you trust this vault.`;
-		}
 		if (file.endsWith(".sty")) {
 			const pkg = file.replace(/\.sty$/, "");
 			return `The LaTeX package "${pkg}" is not installed in your TeX distribution. Install it (e.g. \`tlmgr install ${pkg}\`) or remove the \\usepackage line.`;
@@ -491,9 +483,9 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		);
 	}
 
-	const restrictFiles = options.restrictFileAccess !== false;
-	const extraEnv: Record<string, string> = restrictFiles ? { openin_any: "p" } : {};
-	const env = { ...buildSpawnEnv(options.extraPathDirs ?? []), ...extraEnv };
+	// No `openin_any`: it never sandboxed reads and broke luaotfload (#4). See
+	// AGENTS.md rule 8.
+	const env = buildSpawnEnv(options.extraPathDirs ?? []);
 
 	// ---- resolve binaries -------------------------------------------------
 	let engineResolved: ResolvedBinary;
@@ -564,7 +556,6 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		timeoutMs,
 		viaHost: engineResolved.viaHost,
 		extraDirs: options.extraPathDirs,
-		hostEnv: extraEnv,
 	});
 	const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
 	const engineLog = joinLog([
@@ -594,7 +585,7 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 
 	if (engineRun.code !== 0 || /^!\s?/m.test(engineLog)) {
 		const summary = extractErrorSummary(engineLog) ?? `The TeX engine exited with code ${engineRun.code}.`;
-		return fail("compile-error", summary, engineLog, deriveHint(engineLog, options.engine, restrictFiles));
+		return fail("compile-error", summary, engineLog, deriveHint(engineLog, options.engine));
 	}
 
 	const artifact = path.join(workDir, `${jobName}.${spec.artifactExt}`);
@@ -625,7 +616,6 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		timeoutMs,
 		viaHost: dvisvgmResolved.viaHost,
 		extraDirs: options.extraPathDirs,
-		hostEnv: extraEnv,
 	});
 	if (svgRun.timedOut) {
 		return fail(
@@ -652,7 +642,7 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 			extractErrorSummary(svgRun.stderr + svgRun.stdout) ??
 				`dvisvgm exited with code ${svgRun.code}.`,
 			svgLog,
-			deriveHint(svgLog, options.engine, restrictFiles),
+			deriveHint(svgLog, options.engine),
 		);
 	}
 
