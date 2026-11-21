@@ -162,6 +162,17 @@ To force a diagram to look identical in both light and dark themes, give it a ba
 \end{tikzpicture}
 ```
 
+## API for other plugins
+
+Other plugins can wait for diagrams to finish, for example before printing:
+
+```ts
+const tikz = app.plugins.plugins.tikz?.api; // missing in older versions
+const { errors } = (await tikz?.whenSettled(root)) ?? { errors: 0 };
+```
+
+`whenSettled(root)` resolves once every diagram inside `root` shows a diagram, an error or "not rendered yet". `errors` counts the diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
+
 ## Privacy and security
 
 - **Running programs:** the plugin starts only your TeX engine and `dvisvgm`, with an argument list and never through a shell. Under Flatpak it runs them on the host with `flatpak-spawn --host`.

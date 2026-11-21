@@ -1,6 +1,7 @@
 import { Notice, Platform, Plugin } from "obsidian";
 import type { DesktopServices } from "./desktop";
 import { registerTikzProcessor, type TikzRenderer } from "./render";
+import type { TikzApi } from "./settle";
 import { DEFAULT_SETTINGS, mergeSettings, TikzSettingTab, type TikzSettings } from "./settings";
 import { SharedCleanupModal, SharedSync, describeSyncReport } from "./sharedSync";
 import { SharedDiagramStore } from "./sharedStore";
@@ -21,6 +22,13 @@ export default class TikzPlugin extends Plugin {
 	/** Desktop only. */
 	sharedSync: SharedSync | undefined;
 	private renderer: TikzRenderer | null = null;
+	/**
+	 * For other plugins, as `app.plugins.plugins.tikz.api` (Folder to PDF
+	 * waits on it before printing). Public: only add to it, never change it.
+	 */
+	readonly api: TikzApi = {
+		whenSettled: (root) => this.renderer?.whenSettled(root) ?? Promise.resolve({ errors: 0 }),
+	};
 
 	async onload(): Promise<void> {
 		await this.loadSettings();

@@ -16,6 +16,7 @@ import { normalizePreamble, tidyTikzSource } from "./compiler/wrapSource";
 import type { DesktopServices } from "./desktop";
 import { Limiter, resolveConcurrency } from "./limiter";
 import type { TikzSettings } from "./settingsModel";
+import { waitForSettled } from "./settle";
 import { computeSharedKey } from "./shared/sharedKey";
 import type { SharedDiagramStore } from "./sharedStore";
 import { prepareSvgForDisplay } from "./svg";
@@ -69,6 +70,11 @@ export interface TikzRenderer {
 	refreshAll(): void;
 	/** Mobile: re-reads every diagram from the shared folder (it moved). */
 	reloadShared(): void;
+	/**
+	 * Resolves once every diagram inside `root` has finished rendering
+	 * (diagram, error or "not rendered yet"), with the number of errors shown.
+	 */
+	whenSettled(root: HTMLElement): Promise<{ errors: number }>;
 }
 
 /**
@@ -138,7 +144,17 @@ export function startCompile(
  */
 class DiagramRenderComponent extends MarkdownRenderChild {
 	private unloaded = false;
-	private readonly container: HTMLElement;
+	readonly container: HTMLElement;
+	/**
+	 * The current render: resolves (never rejects) when it finishes or the
+	 * block unloads. Pending until `onload` starts the first render.
+	 */
+	settled: Promise<void>;
+	private endFirstRender!: () => void;
+	private endUnload!: () => void;
+	private readonly unloadSignal = new Promise<void>((resolve) => {
+		this.endUnload = resolve;
+	});
 	private rawSvg: string | null = null;
 	/** Local cache key on desktop, shared key on mobile; also names the SVG ids. */
 	private cacheKey = "";
@@ -158,6 +174,9 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	) {
 		super(containerEl);
 		this.container = containerEl.createDiv({ cls: "tikz-container" });
+		this.settled = new Promise((resolve) => {
+			this.endFirstRender = resolve;
+		});
 	}
 
 	onload(): void {
@@ -186,18 +205,19 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			this.register(
 				this.deps.shared.onChange((key) => {
 					if (this.unloaded || key !== this.sharedKey) return;
-					this.renderFromShared(false).catch((error: unknown) => this.failUnexpectedly(error));
+					this.track(this.renderFromShared(false));
 				}),
 			);
 		}
 
-		// `render()` handles its own failures; this catch is the last line of
-		// defence so a bug can never leave the loading spinner running.
-		this.render().catch((error: unknown) => this.failUnexpectedly(error));
+		this.track(this.render());
+		void this.settled.then(this.endFirstRender);
 	}
 
 	onunload(): void {
 		this.unloaded = true;
+		this.endUnload();
+		this.endFirstRender();
 		this.stopLoadingTimer();
 		this.onUnload();
 	}
@@ -219,7 +239,19 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	reloadShared(): void {
 		if (this.deps.desktop || this.unloaded || !this.sharedKey) return;
 		this.rawSvg = null;
-		this.renderFromShared(true).catch((error: unknown) => this.failUnexpectedly(error));
+		this.track(this.renderFromShared(true));
+	}
+
+	/**
+	 * Makes `render` the current one for `whenSettled`. Rendering handles its
+	 * own failures; this catch is the last line of defence so a bug can never
+	 * leave the loading spinner running.
+	 */
+	private track(render: Promise<void>): void {
+		this.settled = Promise.race([
+			render.catch((error: unknown) => this.failUnexpectedly(error)),
+			this.unloadSignal,
+		]);
 	}
 
 	/** Everything display-time processing depends on besides the SVG itself. */
@@ -510,6 +542,16 @@ export function registerTikzProcessor(plugin: Plugin, deps: RenderDeps): TikzRen
 		},
 		reloadShared(): void {
 			for (const component of mounted) component.reloadShared();
+		},
+		async whenSettled(root: HTMLElement): Promise<{ errors: number }> {
+			await waitForSettled(root, () => mounted);
+			// The theme is read when a diagram is drawn. If `root` was detached
+			// then, or got `data-tikz-theme` later, no `css-change` fires, so
+			// check again (a no-op when nothing changed).
+			for (const component of mounted) {
+				if (root.contains(component.container)) component.redraw();
+			}
+			return { errors: root.querySelectorAll(".tikz-error").length };
 		},
 	};
 }
