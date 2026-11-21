@@ -19,6 +19,7 @@ import type { TikzSettings } from "./settingsModel";
 import { computeSharedKey } from "./shared/sharedKey";
 import type { SharedDiagramStore } from "./sharedStore";
 import { prepareSvgForDisplay } from "./svg";
+import { scopedDarkTheme } from "./theme";
 
 /** Fence language tag. Unchanged from the upstream plugin, on purpose. */
 export const CODE_BLOCK_LANGUAGE = "tikz";
@@ -32,12 +33,18 @@ export const CODE_BLOCK_LANGUAGE = "tikz";
  * the active one, and its class flips before the note window's, so
  * `css-change` would redraw every diagram for the old theme.
  *
+ * A container can override that for the diagrams inside it: the nearest
+ * `data-tikz-theme="light" | "dark"` ancestor wins, then the nearest
+ * `.theme-light` / `.theme-dark` ancestor below `body` (see `theme.ts`).
+ * Another plugin's light print root then gets light colours in a dark app.
+ *
  * Guarded because an unusual host may not expose `body`; a failure here must
  * never cost the user their diagram.
  */
 export function isDarkTheme(el: Node): boolean {
 	try {
-		return el.doc.body.classList.contains("theme-dark");
+		const body = el.doc.body;
+		return scopedDarkTheme(el, body) ?? body.classList.contains("theme-dark");
 	} catch {
 		return false;
 	}

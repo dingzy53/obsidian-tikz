@@ -149,6 +149,8 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 - **Light canvas**: Keeps original colours untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
 - **Off**: Leaves colours unchanged.
 
+The theme comes from Obsidian, unless a container overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. Other plugins use this, for example to print diagrams in light colours while Obsidian is dark.
+
 To force a diagram to look identical in both light and dark themes, give it a background rectangle:
 ```tikz
 \usetikzlibrary{backgrounds}

@@ -90,6 +90,8 @@ src/settingsModel.ts     Settings schema, defaults, mergeSettings/validation
 src/limiter.ts           Bounded-concurrency queue for compiles (pure)
 src/render.ts            registerMarkdownCodeBlockProcessor handler,
                          loading state, error block, dark-mode + SVGO
+src/theme.ts             Pure theme lookup per diagram (`data-tikz-theme`,
+                         nearest theme class, then `body`)
 src/zoom.ts              Pure zoom/pan maths for the diagram viewer
 src/zoomModal.ts         Diagram viewer modal (zoom, pan, keyboard); adopts the
                          sanitised SVG via DOMParser/importNode
