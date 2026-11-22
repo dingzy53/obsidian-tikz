@@ -196,6 +196,6 @@
   \foreach \c [count=\i] in {black, red, orange, yellow, green, blue, violet} {
     \fill[\c] (\i, 0) rectangle +(0.85, 0.85);
   }
-  \node[right] at (1, -0.5) {always on white};
+  \node[right] at (1, -0.5) {white background flips in dark mode};
 \end{tikzpicture}
 ```
