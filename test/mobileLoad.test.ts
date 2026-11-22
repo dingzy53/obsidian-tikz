@@ -53,6 +53,8 @@ const fakeDocument = {
 // --- A minimal DOM stand-in -------------------------------------------------
 
 class FakeElement {
+	parent: FakeElement | null = null;
+	hidden = false;
 	children: FakeElement[] = [];
 	classes = new Set<string>();
 	attributes = new Map<string, string>();
@@ -71,6 +73,7 @@ class FakeElement {
 	}
 	createDiv(options?: { cls?: string; text?: string }): FakeElement {
 		const child = new FakeElement(options);
+		child.parent = this;
 		this.children.push(child);
 		return child;
 	}
@@ -87,7 +90,15 @@ class FakeElement {
 		this.text = text;
 	}
 	appendChild(child: FakeElement): void {
+		child.parent = this;
 		this.children.push(child);
+	}
+	contains(node: FakeElement): boolean {
+		return node === this || this.all().includes(node);
+	}
+	isShown(): boolean {
+		if (this.hidden) return false;
+		return this.parent?.isShown() ?? true;
 	}
 	toggleClass(cls: string, on: boolean): void {
 		if (on) this.classes.add(cls);
@@ -365,6 +376,7 @@ describe("mobile load path (no Node)", () => {
 			onload(): Promise<void>;
 			desktop: unknown;
 			tab: { getSettingDefinitions(): unknown[] };
+			api: { whenSettled(root: FakeElement): Promise<{ errors: number }> };
 		};
 		await plugin.onload();
 		expect(plugin.desktop).toBeUndefined();
@@ -392,6 +404,19 @@ describe("mobile load path (no Node)", () => {
 		await waitFor(() => missing.all().some((el) => el.classes.has("tikz-pending") || el.classes.has("tikz-error")));
 		expect(missing.all().some((el) => el.classes.has("tikz-pending"))).toBe(true);
 		expect(missing.all().some((el) => el.classes.has("tikz-error"))).toBe(false);
+
+		// `whenSettled` counts only shown error components, skipping a hidden copy
+		// (like the inactive Live Preview DOM in Reading view).
+		const brokenSource = "\\draw (0,0) -- (2,2);";
+		harness.files.set(`TikZ cache/${sharedKey(tidyTikzSource(brokenSource))}.svg`, "<svg><broken");
+		const page = new FakeElement();
+		const visibleView = page.createDiv({ cls: "markdown-preview-view" });
+		const hiddenView = page.createDiv({ cls: "markdown-source-view" });
+		hiddenView.hidden = true;
+		processor?.(SOURCE, visibleView.createDiv(), { addChild: (child: { load(): void }) => child.load() });
+		processor?.(brokenSource, visibleView.createDiv(), { addChild: (child: { load(): void }) => child.load() });
+		processor?.(brokenSource, hiddenView.createDiv(), { addChild: (child: { load(): void }) => child.load() });
+		expect(await plugin.api.whenSettled(page)).toEqual({ errors: 1 });
 
 		// The settings tab only shows rows that work here, and building it
 		// touches nothing desktop-only.

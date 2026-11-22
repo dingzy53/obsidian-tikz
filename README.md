@@ -171,7 +171,7 @@ const tikz = app.plugins.plugins.tikz?.api; // missing in older versions
 const { errors } = (await tikz?.whenSettled(root)) ?? { errors: 0 };
 ```
 
-`whenSettled(root)` resolves once every diagram inside `root` shows a diagram, an error or "not rendered yet". `errors` counts the diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
+`whenSettled(root)` resolves once every diagram inside `root` (including hidden ones) shows a diagram, an error or "not rendered yet". `errors` counts the shown diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
 
 ## Privacy and security
 
