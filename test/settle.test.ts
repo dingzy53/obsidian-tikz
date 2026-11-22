@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { waitForSettled, type Settleable } from "../src/settle";
+import {
+	countShownErrors,
+	isElementShown,
+	waitForSettled,
+	type Settleable,
+	type ShowableElement,
+} from "../src/settle";
 
 interface Deferred {
 	promise: Promise<void>;
@@ -14,8 +20,8 @@ function deferred(): Deferred {
 	return { promise, resolve };
 }
 
-/** Diagrams are plain strings; `root` contains the ones it lists. */
-function rootOf(...inside: string[]): { contains(node: string): boolean } {
+/** Diagrams are plain values; `root` contains the ones it lists. */
+function rootOf<N>(...inside: N[]): { contains(node: N): boolean } {
 	return { contains: (node) => inside.includes(node) };
 }
 
@@ -25,7 +31,7 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 describe("waitForSettled", () => {
 	it("resolves at once when nothing is mounted inside root", async () => {
 		const outside = deferred();
-		await waitForSettled(rootOf(), () => [{ container: "a", settled: outside.promise }]);
+		await waitForSettled(rootOf<string>(), () => [{ container: "a", settled: outside.promise }]);
 	});
 
 	it("waits for every diagram inside root", async () => {
@@ -43,6 +49,22 @@ describe("waitForSettled", () => {
 		await tick();
 		expect(done).toBe(false);
 		b.resolve();
+		await wait;
+		expect(done).toBe(true);
+	});
+
+	it("still waits for hidden diagrams inside root", async () => {
+		const hiddenContainer: ShowableElement = { checkVisibility: () => false };
+		const hidden = deferred();
+		let done = false;
+		const wait = waitForSettled(rootOf(hiddenContainer), () => [
+			{ container: hiddenContainer, settled: hidden.promise },
+		]).then(() => {
+			done = true;
+		});
+		await tick();
+		expect(done).toBe(false);
+		hidden.resolve();
 		await wait;
 		expect(done).toBe(true);
 	});
@@ -67,5 +89,60 @@ describe("waitForSettled", () => {
 		rerender.resolve();
 		await wait;
 		expect(done).toBe(true);
+	});
+});
+
+describe("isElementShown", () => {
+	it("prefers checkVisibility() when available, including for position: fixed elements", () => {
+		expect(isElementShown({ checkVisibility: () => true, isShown: () => false, offsetParent: null })).toBe(true);
+		expect(isElementShown({ checkVisibility: () => false, isShown: () => true, offsetParent: {} })).toBe(false);
+	});
+
+	it("falls back to Obsidian's isShown() when checkVisibility is unavailable", () => {
+		expect(isElementShown({ isShown: () => true, offsetParent: null })).toBe(true);
+		expect(isElementShown({ isShown: () => false, offsetParent: {} })).toBe(false);
+	});
+
+	it("falls back to offsetParent when neither method exists", () => {
+		expect(isElementShown({ offsetParent: {} })).toBe(true);
+		expect(isElementShown({ offsetParent: null })).toBe(false);
+		expect(isElementShown({})).toBe(false);
+	});
+});
+
+describe("countShownErrors", () => {
+	it("skips a hidden container next to a visible one inside the same root", () => {
+		// Reproduces Reading view with an inactive Live Preview copy in document.body.
+		const visiblePreview: ShowableElement = { checkVisibility: () => true };
+		const hiddenSource: ShowableElement = { checkVisibility: () => false };
+		const mounted = [
+			{ container: visiblePreview, hasError: true },
+			{ container: hiddenSource, hasError: true },
+		];
+		expect(countShownErrors(rootOf(visiblePreview, hiddenSource), mounted)).toBe(1);
+	});
+
+	it("counts errors in a visible print root and ignores non-errors and diagrams outside root", () => {
+		const printErr: ShowableElement = { isShown: () => true };
+		const printOk: ShowableElement = { isShown: () => true };
+		const outsideErr: ShowableElement = { isShown: () => true };
+		const hiddenErr: ShowableElement = { isShown: () => false };
+		const mounted = [
+			{ container: printErr, hasError: true },
+			{ container: printOk, hasError: false },
+			{ container: outsideErr, hasError: true },
+			{ container: hiddenErr, hasError: true },
+		];
+		expect(countShownErrors(rootOf(printErr, printOk, hiddenErr), mounted)).toBe(1);
+	});
+
+	it("returns zero when only hidden diagrams have errors", () => {
+		const hiddenA: ShowableElement = { offsetParent: null };
+		const hiddenB: ShowableElement = { checkVisibility: () => false };
+		const mounted = [
+			{ container: hiddenA, hasError: true },
+			{ container: hiddenB, hasError: true },
+		];
+		expect(countShownErrors(rootOf(hiddenA, hiddenB), mounted)).toBe(0);
 	});
 });

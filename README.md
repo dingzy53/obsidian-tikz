@@ -149,18 +149,9 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 - **Light canvas**: Keeps original colours untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
 - **Off**: Leaves colours unchanged.
 
-The theme comes from Obsidian, unless a container overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. Other plugins use this, for example to print diagrams in light colours while Obsidian is dark.
+The theme comes from Obsidian, unless a container outside the note overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. This is for other plugins and outer containers, for example printing diagrams in light colours while Obsidian is dark. Wrapping a ` ```tikz ` block in `<div data-tikz-theme="light">…</div>` in Markdown does not work: Obsidian renders the HTML `<div>` and the code block as siblings rather than nesting them.
 
-To force a diagram to look identical in both light and dark themes, give it a background rectangle:
-```tikz
-\usetikzlibrary{backgrounds}
-\begin{tikzpicture}[
-    show background rectangle,
-    background rectangle/.style={fill=white, draw=none},
-  ]
-  \draw[thick, ->] (0,0) -- (1,1) node[right] {$x$};
-\end{tikzpicture}
-```
+In **Adaptive** mode, explicit white fills (such as `fill=white` on a background rectangle or legend box) also mirror to black in dark mode so light ink on top stays readable. To keep diagrams on a white background with untouched colours in dark mode, switch **Dark mode colours** to **Light canvas**.
 
 ## API for other plugins
 
@@ -171,7 +162,7 @@ const tikz = app.plugins.plugins.tikz?.api; // missing in older versions
 const { errors } = (await tikz?.whenSettled(root)) ?? { errors: 0 };
 ```
 
-`whenSettled(root)` resolves once every diagram inside `root` shows a diagram, an error or "not rendered yet". `errors` counts the diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
+`whenSettled(root)` resolves once every diagram inside `root` (including hidden ones) shows a diagram, an error or "not rendered yet". `errors` counts the shown diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
 
 ## Privacy and security
 

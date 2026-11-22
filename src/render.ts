@@ -16,7 +16,7 @@ import { normalizePreamble, tidyTikzSource } from "./compiler/wrapSource";
 import type { DesktopServices } from "./desktop";
 import { Limiter, resolveConcurrency } from "./limiter";
 import type { TikzSettings } from "./settingsModel";
-import { waitForSettled } from "./settle";
+import { countShownErrors, waitForSettled } from "./settle";
 import { computeSharedKey } from "./shared/sharedKey";
 import type { SharedDiagramStore } from "./sharedStore";
 import { prepareSvgForDisplay } from "./svg";
@@ -71,8 +71,9 @@ export interface TikzRenderer {
 	/** Mobile: re-reads every diagram from the shared folder (it moved). */
 	reloadShared(): void;
 	/**
-	 * Resolves once every diagram inside `root` has finished rendering
-	 * (diagram, error or "not rendered yet"), with the number of errors shown.
+	 * Resolves once every mounted diagram inside `root` (including hidden
+	 * ones) has finished rendering (diagram, error or "not rendered yet"),
+	 * with the number of shown diagrams that show an error.
 	 */
 	whenSettled(root: HTMLElement): Promise<{ errors: number }>;
 }
@@ -165,6 +166,12 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	private shownKey = "";
 	/** True only while a diagram (not a spinner or an error) is on screen. */
 	private zoomable = false;
+	/** True while this diagram is currently displaying a compile or display error. */
+	private errored = false;
+
+	get hasError(): boolean {
+		return this.errored;
+	}
 
 	constructor(
 		containerEl: HTMLElement,
@@ -216,6 +223,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	onunload(): void {
 		this.unloaded = true;
+		this.errored = false;
 		this.endUnload();
 		this.endFirstRender();
 		this.stopLoadingTimer();
@@ -313,6 +321,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	private showLoading(text = "Compiling diagram…"): void {
 		this.stopLoadingTimer();
+		this.errored = false;
 		this.setZoomable(false);
 		this.container.empty();
 		const box = this.container.createDiv({ cls: "tikz-loading" });
@@ -410,6 +419,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	 * just no render to show until a desktop provides one.
 	 */
 	private showPending(): void {
+		this.errored = false;
 		this.setZoomable(false);
 		this.container.empty();
 		this.container.classList.remove("tikz-light-canvas");
@@ -448,6 +458,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			return;
 		}
 
+		this.errored = false;
 		this.container.classList.toggle(
 			"tikz-light-canvas",
 			settings.colorAdaptation === "light-canvas" && isDark,
@@ -466,6 +477,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 
 	/** The diagram could not be shown (rejected SVG, I/O failure, internal error). */
 	private showDisplayError(error: unknown): void {
+		this.errored = true;
 		this.setZoomable(false);
 		this.container.empty();
 		this.container.classList.remove("tikz-light-canvas");
@@ -481,6 +493,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 	}
 
 	private showError(failure: CompileFailure): void {
+		this.errored = true;
 		this.setZoomable(false);
 		this.container.empty();
 		const box = this.container.createDiv({ cls: "tikz-error" });
@@ -551,7 +564,7 @@ export function registerTikzProcessor(plugin: Plugin, deps: RenderDeps): TikzRen
 			for (const component of mounted) {
 				if (root.contains(component.container)) component.redraw();
 			}
-			return { errors: root.querySelectorAll(".tikz-error").length };
+			return { errors: countShownErrors(root, mounted) };
 		},
 	};
 }
