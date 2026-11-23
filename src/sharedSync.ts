@@ -15,7 +15,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import { normalizePreamble } from "./compiler/wrapSource";
 import type { DesktopServices } from "./desktop";
 import { startCompile } from "./render";
-import type { TikzSettings } from "./settingsModel";
+import type { SharedCompileError, TikzSettings } from "./settingsModel";
 import { extractTikzSources, mayContainTikz } from "./shared/scan";
 import { planSync } from "./shared/plan";
 import { computeSharedKey } from "./shared/sharedKey";
@@ -58,6 +58,11 @@ export class SharedSync {
 		private readonly desktop: DesktopServices,
 		private readonly store: SharedDiagramStore,
 		private readonly getSettings: () => TikzSettings,
+		private readonly onErrorsChanged?: {
+			record(key: string, error: SharedCompileError): void;
+			clear(key: string): void;
+			prune(keepKeys: ReadonlySet<string>): void;
+		},
 	) {}
 
 	/** Cancels a running "render all" between compiles. */
@@ -122,6 +127,10 @@ export class SharedSync {
 			if (await this.store.write(key, svg)) copied++;
 		}
 
+		const presentKeys = new Set(this.store.list().map((file) => file.basename));
+		for (const key of presentKeys) this.onErrorsChanged?.clear(key);
+		this.onErrorsChanged?.prune(new Set(blocks.keys()));
+
 		// Pruning only runs while sharing is still on: turning it off mid-sync
 		// hands cleanup to the user's explicit choice in the dialog.
 		const removed = this.isActive() ? await this.store.deleteNames(plan.stale) : 0;
@@ -165,12 +174,21 @@ export class SharedSync {
 				notice.setMessage(`Rendering diagrams for mobile… ${index + 1}/${todo.length}`);
 				const settings = this.getSettings();
 				const localKey = this.localKey(tidied);
-				const svg =
-					(await this.desktop.cache.get(localKey)) ??
-					(await startCompile(localKey, tidied, settings, this.desktop).then((result) =>
-						result.ok ? result.svg : null,
-					));
+				const cachedSvg = await this.desktop.cache.get(localKey);
+				let svg = cachedSvg;
+				if (!svg) {
+					const compiled = await startCompile(localKey, tidied, settings, this.desktop);
+					if (compiled.ok) {
+						svg = compiled.svg;
+					} else {
+						this.onErrorsChanged?.record(key, {
+							summary: compiled.summary,
+							...(compiled.hint ? { hint: compiled.hint } : {}),
+						});
+					}
+				}
 				if (svg && this.isActive()) {
+					this.onErrorsChanged?.clear(key);
 					await this.store.write(key, svg);
 					rendered++;
 				} else if (!svg) {

@@ -21,6 +21,20 @@ export const PGF_DRIVER_LINE = "\\def\\pgfsysdriver{pgfsys-dvisvgm.def}";
 /** `\documentclass{standalone}` — what the upstream TikZJax plugin used. */
 export const STANDALONE_CLASS = "\\documentclass{standalone}";
 
+/** Preamble shipped prior to `\pgfplotsset{compat=1.18}` so saved defaults migrate cleanly. */
+export const LEGACY_DEFAULT_PREAMBLE = [
+	"\\usepackage{tikz}",
+	"\\usepackage{tikz-cd}",
+	"\\usepackage{circuitikz}",
+	"\\usepackage{pgfplots}",
+	"\\usepackage{chemfig}",
+	"\\usepackage{amsmath}",
+	"\\usepackage{amssymb}",
+	"\\usepackage{amsfonts}",
+	"\\usepackage{tikz-3dplot}",
+	"\\usepackage{array}",
+].join("\n");
+
 /**
  * Convenience packages seeded into the default preamble. This is a *default*,
  * not a restriction: any package installed in the user's TeX distribution can
@@ -32,6 +46,7 @@ export const DEFAULT_PREAMBLE = [
 	"\\usepackage{tikz-cd}",
 	"\\usepackage{circuitikz}",
 	"\\usepackage{pgfplots}",
+	"\\pgfplotsset{compat=1.18}",
 	"\\usepackage{chemfig}",
 	"\\usepackage{amsmath}",
 	"\\usepackage{amssymb}",

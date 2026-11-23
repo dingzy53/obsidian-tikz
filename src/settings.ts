@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, TextAreaComponent } from "obsidian";
 import type { Setting, SettingDefinitionItem } from "obsidian";
 import type TikzPlugin from "./main";
 import { DEFAULT_TIMEOUT_SECONDS, ENGINE_IDS, ENGINE_SPECS } from "./compiler/engineSpecs";
@@ -102,34 +102,27 @@ export class TikzSettingTab extends PluginSettingTab {
 			heading: "Rendering",
 			items: [
 				{
-					name: "Dark mode colours",
-					desc:
-						"Diagrams are drawn for a light page, so on a dark theme some colours need help. " +
-						"Adaptive mirrors each colour's lightness (hue preserved), which fixes dark tints, greys " +
-						"and light-filled boxes. Light canvas leaves colours untouched and shows the diagram on " +
-						"a light panel instead — no colour shifts at all, best when shading is the point. " +
-						"Applied at display time, so changing this never recompiles a diagram.",
+					name: "Dark mode colors",
+					desc: "Choose how light-page diagrams adapt on dark Obsidian themes without recompiling.",
 					control: {
 						type: "dropdown",
 						key: "colorAdaptation",
 						options: {
 							adaptive: "Adaptive (recommended)",
 							"light-canvas": "Light canvas",
-							off: "Off (leave colours alone)",
+							off: "Off (leave colors alone)",
 						},
 					},
 				},
 				{
 					name: "Click to enlarge diagrams",
-					desc:
-						"Clicking a diagram, or pressing Enter on it, opens it in a viewer where you can zoom " +
-						"(wheel, pinch, + and −) and drag to pan.",
+					desc: "Clicking a diagram or pressing Enter on it opens the zoomable viewer.",
 					control: { type: "toggle", key: "zoomOnClick" },
 				},
 				{
 					name: "TeX engine",
 					visible: this.isDesktop,
-					desc: "Which engine compiles your diagrams. LuaLaTeX is the default: it matched LaTeX on every test case and also supports system fonts (fontspec).",
+					desc: "TeX engine used to compile diagrams (LuaLaTeX recommended).",
 					aliases: ["latex", "lualatex", "xelatex", "pdflatex"],
 					control: {
 						type: "dropdown",
@@ -142,6 +135,7 @@ export class TikzSettingTab extends PluginSettingTab {
 	}
 
 	private binariesGroup(): SettingDefinitionItem {
+		const isFlatpak = (): boolean => this.plugin.desktop?.isFlatpak() ?? false;
 		return {
 			type: "group",
 			heading: "TeX binaries",
@@ -153,38 +147,35 @@ export class TikzSettingTab extends PluginSettingTab {
 					render: (setting) => this.renderBinaryStatus(setting),
 				},
 				{
-					name: "Running in Flatpak",
-					desc: "Host TeX distributions (TeX Live, MacTeX) are discovered automatically and run through flatpak-spawn.",
-					visible: () => this.plugin.desktop?.isFlatpak() ?? false,
-				},
-				{
-					name: "PATH on macOS",
-					desc: "Apps launched from Finder or the Dock do not inherit your shell's PATH, so a TeX install that works in Terminal can still be invisible here. If a binary shows as “not found”, use “Detect automatically” or paste its full path.",
+					name: "Environment",
+					desc: "Platform notes for locating TeX binaries.",
+					visible: () => this.isDesktop() && (Platform.isMacOS || isFlatpak()),
+					render: (setting) => this.renderEnvironmentInfo(setting, isFlatpak()),
 				},
 				{
 					name: "TeX engine path",
-					desc: "Leave empty to detect automatically.",
+					desc: "Leave empty to auto-detect.",
 					aliases: ["binary", "executable"],
 					control: { type: "text", key: "enginePath", placeholder: "Auto-detect the engine" },
 				},
 				{
 					name: "Detect TeX engine",
-					desc: "Ask your login shell where the engine lives and fill in the path.",
+					desc: "Look up the TeX engine path using your login shell.",
 					action: () => void this.detect("engine"),
 				},
 				{
 					name: "dvisvgm path",
-					desc: "Leave empty to detect automatically. dvisvgm converts the TeX output to SVG.",
+					desc: "Leave empty to auto-detect the DVI-to-SVG converter.",
 					control: { type: "text", key: "dvisvgmPath", placeholder: "Auto-detect dvisvgm" },
 				},
 				{
 					name: "Detect dvisvgm",
-					desc: "Ask your login shell where dvisvgm lives and fill in the path.",
+					desc: "Look up the dvisvgm path using your login shell.",
 					action: () => void this.detect("dvisvgm"),
 				},
 				{
 					name: "Extra PATH directories",
-					desc: "One directory per line. Appended to the PATH used when compiling, before the built-in fallbacks.",
+					desc: "Extra directories appended to PATH when compiling, one per line.",
 					control: { type: "textarea", key: "extraPathDirs", placeholder: "/usr/local/bin", rows: 3 },
 				},
 			],
@@ -200,18 +191,9 @@ export class TikzSettingTab extends PluginSettingTab {
 			items: [
 				{
 					name: "Preamble",
-					desc: "Added to blocks that do not carry their own \\documentclass. This is only a default, not a restriction — any package installed in your TeX distribution can be loaded with an in-block \\usepackage.",
-					aliases: ["packages", "usepackage"],
-					control: { type: "textarea", key: "defaultPreamble", rows: 12 },
-				},
-				{
-					name: "Restore default preamble",
-					action: () => {
-						void this.setControlValue("defaultPreamble", DEFAULT_PREAMBLE).then(() => {
-							this.update();
-							new Notice("Default preamble restored.");
-						});
-					},
+					desc: "Loaded for blocks without a custom \\documentclass.",
+					aliases: ["packages", "usepackage", "restore", "default preamble"],
+					render: (setting) => this.renderPreamble(setting),
 				},
 			],
 		};
@@ -225,19 +207,20 @@ export class TikzSettingTab extends PluginSettingTab {
 			items: [
 				{
 					name: "Vault content is untrusted",
-					desc: "Shell escape lets a diagram run shell commands: a shared or synced note could execute anything on your machine just by being opened. Leave it off unless you specifically need a package such as minted.",
+					desc: "Shell escape lets diagrams run arbitrary shell commands and should stay off for untrusted notes.",
 					render: (setting) => {
+						if (!this.isDesktop()) return;
 						setting.settingEl.addClass("tikz-settings-warning");
 						setting
 							.setName("Vault content is untrusted")
 							.setDesc(
-								"Shell escape lets a diagram run shell commands: a shared or synced note could execute anything on your machine just by being opened. Leave it off unless you specifically need a package such as minted.",
+								"Shell escape lets diagrams run arbitrary shell commands and should stay off for untrusted notes.",
 							);
 					},
 				},
 				{
 					name: "Allow shell escape (\\write18)",
-					desc: "Passes -shell-escape to the TeX engine. Off by default, and it should stay off.",
+					desc: "Pass -shell-escape to the TeX engine.",
 					control: { type: "toggle", key: "allowShellEscape" },
 				},
 			],
@@ -252,12 +235,10 @@ export class TikzSettingTab extends PluginSettingTab {
 			items: [
 				{
 					name: "Compile timeout",
-					desc: `Seconds allowed per stage (TeX, then dvisvgm), 1–${MAX_TIMEOUT_SECONDS}. A compile that exceeds it is killed and reported instead of hanging.`,
+					desc: `Seconds allowed per stage (1–${MAX_TIMEOUT_SECONDS}) before a compile is aborted.`,
 					control: {
 						type: "number",
 						key: "compileTimeoutSeconds",
-						min: 1,
-						max: MAX_TIMEOUT_SECONDS,
 						step: 1,
 						defaultValue: DEFAULT_TIMEOUT_SECONDS,
 						validate: (value) =>
@@ -268,12 +249,10 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Parallel compiles",
-					desc: `How many diagrams may compile at once; the rest wait in a queue. 0 picks automatically (half your CPU cores, at most 4). Maximum ${MAX_CONCURRENT_COMPILES_LIMIT}.`,
+					desc: `Maximum simultaneous compiles (0 = automatic, max ${MAX_CONCURRENT_COMPILES_LIMIT}).`,
 					control: {
 						type: "number",
 						key: "maxConcurrentCompiles",
-						min: 0,
-						max: MAX_CONCURRENT_COMPILES_LIMIT,
 						step: 1,
 						validate: (value) =>
 							Number.isInteger(value) && value >= 0 && value <= MAX_CONCURRENT_COMPILES_LIMIT
@@ -283,11 +262,10 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Maximum cached diagrams",
-					desc: "Least recently used cached SVGs are dropped beyond this limit. Set to 0 for no limit.",
+					desc: "Maximum cached SVGs before evicting the least recently used (0 = unlimited).",
 					control: {
 						type: "number",
 						key: "maxCacheEntries",
-						min: 0,
 						step: 1,
 						validate: (value) =>
 							Number.isInteger(value) && value >= 0 ? undefined : "Enter a whole number, 0 or more.",
@@ -295,8 +273,9 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Cached diagrams",
-					desc: "Rendered SVGs are cached by content hash, so unchanged blocks never recompile.",
+					desc: "Rendered SVGs are cached locally by content hash.",
 					render: (setting) => {
+						if (!this.isDesktop()) return;
 						setting.setName("Cached diagrams").setDesc("Counting cached diagrams…");
 						void this.updateCacheSummary(setting);
 					},
@@ -329,28 +308,19 @@ export class TikzSettingTab extends PluginSettingTab {
 			items: [
 				{
 					name: "Share diagrams with mobile",
-					desc:
-						"Phones cannot run TeX. When on, this desktop keeps a copy of every diagram in your notes as " +
-						"an SVG in the shared folder below, a normal vault folder that Obsidian Sync, git or Syncthing " +
-						"carry to your phone, where the plugin displays it. Off by default because it adds visible " +
-						"files to your vault. Turning it off asks whether to delete them.",
+					desc: "Mirror compiled SVGs into a visible vault folder so phones and tablets can display them.",
 					aliases: ["phone", "sync", "ios", "android", "tablet"],
 					visible: this.isDesktop,
 					control: { type: "toggle", key: "shareWithMobile" },
 				},
 				{
 					name: "Diagrams on this device",
-					desc:
-						"This device cannot compile TikZ. It shows the diagrams a desktop puts in the shared folder " +
-						"(turn on “Share diagrams with mobile” there); anything not shared yet shows as “not rendered yet”.",
+					desc: "Mobile displays shared SVGs from a desktop; unshared blocks show as not rendered yet.",
 					visible: () => !this.isDesktop(),
 				},
 				{
 					name: "Shared folder",
-					desc:
-						"Vault folder for shared diagrams. It must be a visible folder outside the config folder, " +
-						"because sync services skip hidden ones. Use the same folder on every device. Turn sharing " +
-						"off to change it.",
+					desc: "Visible vault folder outside the config folder for shared SVGs.",
 					control: {
 						type: "text",
 						key: "sharedFolder",
@@ -369,7 +339,7 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Update shared diagrams now",
-					desc: "Adds diagrams already rendered on this desktop and removes ones no note uses any more. Also runs once at startup.",
+					desc: "Copy cached renders to the shared folder and prune unused SVGs.",
 					visible: () => this.isDesktop() && sharing(),
 					action: () => {
 						void this.plugin.runSharedSync(true).then(() => this.update());
@@ -377,7 +347,7 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Render all for mobile",
-					desc: "Compiles every diagram that has never been rendered on this desktop, so your phone can show it without you opening each note here. Runs in the background.",
+					desc: "Compile any missing diagrams in your vault so mobile devices can display them.",
 					visible: () => this.isDesktop() && sharing(),
 					action: () => {
 						void this.plugin.renderAllForMobile().then(() => this.update());
@@ -385,7 +355,7 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Delete shared diagrams",
-					desc: "Removes the shared SVGs (only those; other files in the folder are kept). Synced devices lose them too.",
+					desc: "Remove shared SVGs from the vault while keeping any unrelated files.",
 					visible: () => !sharing() && this.plugin.shared.list().length > 0,
 					action: () => {
 						void this.plugin.deleteSharedDiagrams().then(() => this.update());
@@ -393,6 +363,40 @@ export class TikzSettingTab extends PluginSettingTab {
 				},
 			],
 		};
+	}
+
+	private renderEnvironmentInfo(setting: Setting, flatpak: boolean): void {
+		if (!this.isDesktop()) return;
+		const notes: string[] = [];
+		if (flatpak) {
+			notes.push("Flatpak detected: host TeX binaries are run through flatpak-spawn.");
+		}
+		if (Platform.isMacOS) {
+			notes.push("macOS GUI apps omit shell PATH: click Detect or paste full paths if binaries show as missing.");
+		}
+		setting.setDesc(notes.join(" "));
+	}
+
+	private renderPreamble(setting: Setting): void {
+		if (!this.isDesktop()) return;
+		setting.settingEl.addClass("tikz-preamble-row");
+		let textArea: TextAreaComponent | undefined;
+		setting.addButton((button) =>
+			button.setButtonText("Restore default").onClick(() => {
+				void this.setControlValue("defaultPreamble", DEFAULT_PREAMBLE).then(() => {
+					textArea?.setValue(DEFAULT_PREAMBLE);
+					new Notice("Default preamble restored.");
+				});
+			}),
+		);
+		setting.addTextArea((area) => {
+			textArea = area;
+			area.inputEl.rows = 12;
+			area.inputEl.spellcheck = false;
+			area.setValue(this.plugin.settings.defaultPreamble).onChange((value) => {
+				void this.setControlValue("defaultPreamble", value);
+			});
+		});
 	}
 
 	private renderSharedStatus(setting: Setting): void {
