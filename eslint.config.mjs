@@ -10,7 +10,7 @@ const ELECTRON = {
 
 export default tseslint.config(
 	{
-		ignores: ["main.js", "node_modules/**", "cache/**"],
+		ignores: ["main.js", "node_modules/**", "cache/**", ".obsidian-cache/**", "wdio.conf.mts", "wdio.mobile.conf.mts", "test/e2e/**", "test-vault/**"],
 	},
 	...tseslint.configs.recommended,
 	{

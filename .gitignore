@@ -5,3 +5,8 @@ main.js
 data.json
 cache/
 .obsidian/
+
+# WebdriverIO E2E
+.obsidian-cache/
+obsidian-versions-lock.txt
+test-vault/.obsidian/

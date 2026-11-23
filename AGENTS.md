@@ -156,3 +156,19 @@ LICENSE
 
 Consult `README.md` and this file first. If an architectural decision or constraint
 needs to change based on real data, update `README.md` and `AGENTS.md` in the same PR.
+
+## Cross-Platform E2E Testing
+
+Real-Obsidian E2E tests live in `test/e2e/**/*.e2e.ts` and run against `test-vault/` via WebdriverIO (`wdio-obsidian-service`).
+
+```bash
+npm run build            # Typecheck + production bundle (main.js)
+npm run check:mobile     # Mobile compatibility check (skips automatically if isDesktopOnly: true)
+npm run test:unit        # Run unit tests
+npm run test:e2e:fast    # Desktop latest Obsidian only (fast agent verification)
+npm run test:e2e:mobile  # Desktop emulated mobile (390x844) latest Obsidian
+npm run test:e2e:android # Real Android APK via Appium + AVD named obsidian_test
+npm run test:e2e         # Full matrix configured in wdio.conf.mts
+```
+
+GitHub Actions workflows in `.github/workflows/e2e.yml` and `.github/workflows/check-new-obsidian.yml` automatically read `manifest.json` (`isDesktopOnly`) to run Linux/Windows/macOS desktop tests (plus mobile emulation and Android API 36 emulator when `isDesktopOnly: false`).

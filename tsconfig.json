@@ -20,7 +20,9 @@
 			"ES2022"
 		],
 		"types": [
-			"node"
+			"node",
+			"@wdio/globals/types",
+			"wdio-obsidian-service"
 		]
 	},
 	"include": [
