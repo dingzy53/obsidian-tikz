@@ -4,9 +4,14 @@
  */
 
 import { DEFAULT_ENGINE, DEFAULT_TIMEOUT_SECONDS, ENGINE_IDS, type EngineId } from "./compiler/engineSpecs";
-import { DEFAULT_PREAMBLE } from "./compiler/wrapSource";
+import { DEFAULT_PREAMBLE, LEGACY_DEFAULT_PREAMBLE, normalizePreamble } from "./compiler/wrapSource";
 import { DEFAULT_SHARED_FOLDER, validateSharedFolder } from "./shared/folder";
 import type { ColorAdaptation } from "./svg";
+
+export interface SharedCompileError {
+	summary: string;
+	hint?: string;
+}
 
 export interface TikzSettings {
 	engine: EngineId;
@@ -43,6 +48,8 @@ export interface TikzSettings {
 	shareWithMobile: boolean;
 	/** Vault-relative folder for shared diagrams. */
 	sharedFolder: string;
+	/** Compact map of desktop compile failures keyed by shared key, synced to mobile. */
+	sharedErrors: Record<string, SharedCompileError>;
 }
 
 export const DEFAULT_SETTINGS: TikzSettings = {
@@ -59,6 +66,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	zoomOnClick: true,
 	shareWithMobile: false,
 	sharedFolder: DEFAULT_SHARED_FOLDER,
+	sharedErrors: {},
 };
 
 const ADAPTATION_MODES: ColorAdaptation[] = ["adaptive", "light-canvas", "off"];
@@ -89,6 +97,27 @@ export function sanitizeMaxCacheEntries(value: unknown): number {
 	return Math.max(0, Math.floor(value));
 }
 
+const MAX_SHARED_ERRORS = 500;
+const SHARED_KEY_PATTERN = /^[0-9a-f]{64}$/;
+
+function sanitizeSharedErrors(raw: unknown): Record<string, SharedCompileError> {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+	const clean: Record<string, SharedCompileError> = {};
+	let count = 0;
+	for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (count >= MAX_SHARED_ERRORS) break;
+		if (!SHARED_KEY_PATTERN.test(key) || !value || typeof value !== "object") continue;
+		const entry = value as Partial<SharedCompileError>;
+		if (typeof entry.summary !== "string" || entry.summary.trim().length === 0) continue;
+		clean[key] = {
+			summary: entry.summary,
+			...(typeof entry.hint === "string" && entry.hint.trim().length > 0 ? { hint: entry.hint } : {}),
+		};
+		count++;
+	}
+	return clean;
+}
+
 /** Normalises whatever is in `data.json` into a complete settings object. */
 export function mergeSettings(loaded: unknown): TikzSettings {
 	const raw = (loaded ?? {}) as Partial<TikzSettings> & {
@@ -100,7 +129,11 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	if (!ENGINE_IDS.includes(merged.engine)) merged.engine = DEFAULT_ENGINE;
 	if (!Array.isArray(merged.extraPathDirs)) merged.extraPathDirs = [];
 	else merged.extraPathDirs = merged.extraPathDirs.filter((dir) => typeof dir === "string");
-	if (typeof merged.defaultPreamble !== "string") merged.defaultPreamble = DEFAULT_PREAMBLE;
+	if (typeof merged.defaultPreamble !== "string") {
+		merged.defaultPreamble = DEFAULT_PREAMBLE;
+	} else if (normalizePreamble(merged.defaultPreamble) === LEGACY_DEFAULT_PREAMBLE) {
+		merged.defaultPreamble = DEFAULT_PREAMBLE;
+	}
 	merged.compileTimeoutSeconds = sanitizeTimeoutSeconds(merged.compileTimeoutSeconds);
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
 	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
@@ -110,6 +143,7 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	merged.shareWithMobile = merged.shareWithMobile === true;
 	const folder = validateSharedFolder(merged.sharedFolder);
 	merged.sharedFolder = folder.ok ? folder.path : DEFAULT_SHARED_FOLDER;
+	merged.sharedErrors = sanitizeSharedErrors(raw.sharedErrors);
 	// Retired in #4: the "Restrict file access" toggle set `openin_any=p`, which
 	// is a no-op since TeX Live 2026 and broke luaotfload before that. Drop the
 	// stale key so it does not linger in `data.json`.

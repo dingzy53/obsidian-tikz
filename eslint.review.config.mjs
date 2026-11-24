@@ -110,6 +110,8 @@ export default defineConfig([
   { files: ["LICENSE", "LICENSE.md", "LICENSE.txt"], rules: { "obsidianmd/validate-license": "error" } },
   { files: ["**/*.ts"], rules: { "obsidianmd/no-nodejs-modules": ["error", { isDesktopOnly: false }] } },
   globalIgnores([
+    ".obsidian-cache/**",
+    "test-vault/**",
     // Not in the scanner's list: the scanner recognises bundled and minified
     // JavaScript by its name and, in a TypeScript project, by its content.
     // These names stand in for that here. Drop "main.js" if your plugin is

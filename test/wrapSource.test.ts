@@ -165,3 +165,10 @@ describe("normalizePreamble", () => {
 		expect(normalizePreamble("\n\n\\usepackage{tikz}\n\n")).toBe("\\usepackage{tikz}");
 	});
 });
+
+describe("DEFAULT_PREAMBLE", () => {
+	it("sets pgfplots compatibility level to avoid backwards compatibility warnings", () => {
+		expect(DEFAULT_PREAMBLE).toContain("\\usepackage{pgfplots}");
+		expect(DEFAULT_PREAMBLE).toContain("\\pgfplotsset{compat=1.18}");
+	});
+});

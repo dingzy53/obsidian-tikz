@@ -13,7 +13,7 @@ Render ` ```tikz ` code blocks in [Obsidian](https://obsidian.md) with your **lo
 
 - Full TikZ and any LaTeX package, compiled by your own TeX installation.
 - The real compiler log when a diagram fails, and a timeout instead of an endless spinner.
-- Colours adapted for dark themes.
+- Colors adapted for dark themes.
 - Click a diagram to open it in a zoomable viewer.
 - A render cache inside the plugin folder. Nothing is written into your notes' folders unless you turn on mobile sharing.
 - Optional: share rendered diagrams with your phone or tablet through Obsidian Sync, git or Syncthing.
@@ -79,7 +79,7 @@ Bare TikZ snippets and packages loaded inline are also accepted:
 
 Click a diagram, or select it with Tab and press Enter, to open it in a viewer. It opens fitted to the window, and you can:
 
-- zoom with the mouse wheel or a trackpad pinch, centred on the pointer;
+- zoom with the mouse wheel or a trackpad pinch, centered on the pointer;
 - drag to pan;
 - double-click to switch between fit and 2×;
 - press `+` / `-` to zoom, `0` to fit, `1` for actual size, and Esc to close.
@@ -98,7 +98,7 @@ Phones and tablets cannot run TeX, so on mobile the plugin only **displays** dia
 - **git, Syncthing, iCloud** and similar: work as-is, since the folder is an ordinary vault folder.
 - **Why a visible folder?** Obsidian Sync never copies folders whose name starts with a dot, and inside a plugin's folder it only copies `manifest.json`, `main.js`, `styles.css` and `data.json`. A hidden cache, including the plugin's own `cache/`, would never reach your phone. You can still add the shared folder to **Settings → Files and links → Excluded files** to keep it out of search and the graph.
 - **Turning sharing off** asks whether to delete the shared diagrams (they disappear from synced devices too) or keep them. **Delete shared diagrams** stays in settings while any remain.
-- Shared files are treated as untrusted: they go through the same SVG sanitiser as fresh renders before they are displayed.
+- Shared files are treated as untrusted: they go through the same SVG sanitizer as fresh renders before they are displayed.
 
 ### Cache & Scratch Files
 
@@ -127,7 +127,7 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 
 | Setting | Description | Default |
 |---|---|---|
-| **Dark mode colours** | `Adaptive` (mirrors lightness with contrast floor), `Light canvas` (light panel), or `Off`. | `Adaptive` |
+| **Dark mode colors** | `Adaptive` (mirrors lightness with contrast floor), `Light canvas` (light panel), or `Off`. | `Adaptive` |
 | **Click to enlarge diagrams** | Clicking a diagram (or Enter on it) opens the zoomable viewer. | `true` |
 | **Share diagrams with mobile** | Desktop: keep an SVG of every diagram in the shared folder so a phone can show it. Adds visible files to the vault. | `false` |
 | **Shared folder** | Vault folder for shared diagrams; must be visible and outside the config folder. Use the same one on every device. | `TikZ cache` |
@@ -145,13 +145,22 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 
 ## Dark mode
 
-- **Adaptive** (default): Automatically mirrors colour lightness while maintaining a 3:1 contrast floor, ensuring labels and shapes remain legible against dark themes.
-- **Light canvas**: Keeps original colours untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
-- **Off**: Leaves colours unchanged.
+- **Adaptive** (default): Automatically mirrors color lightness while maintaining a 3:1 contrast floor, ensuring labels and shapes remain legible against dark themes.
+- **Light canvas**: Keeps original colors untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
+- **Off**: Leaves colors unchanged.
 
-The theme comes from Obsidian, unless a container outside the note overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. This is for other plugins and outer containers, for example printing diagrams in light colours while Obsidian is dark. Wrapping a ` ```tikz ` block in `<div data-tikz-theme="light">…</div>` in Markdown does not work: Obsidian renders the HTML `<div>` and the code block as siblings rather than nesting them.
+The theme comes from Obsidian, unless a container outside the note overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. This is for other plugins and outer containers, for example printing diagrams in light colors while Obsidian is dark. Wrapping a ` ```tikz ` block in `<div data-tikz-theme="light">…</div>` in Markdown does not work: Obsidian renders the HTML `<div>` and the code block as siblings rather than nesting them.
 
-In **Adaptive** mode, explicit white fills (such as `fill=white` on a background rectangle or legend box) also mirror to black in dark mode so light ink on top stays readable. To keep diagrams on a white background with untouched colours in dark mode, switch **Dark mode colours** to **Light canvas**.
+In **Adaptive** mode, explicit white fills (such as `fill=white` on a background rectangle or legend box) also mirror to black in dark mode so light ink on top stays readable. To keep diagrams on a white background with untouched colors in dark mode, switch **Dark mode colors** to **Light canvas**.
+
+## Settings explained
+
+- **Dark mode colors**: Diagrams are authored for light paper. Adaptive preserves hues while inverting lightness at display time; Light canvas leaves every diagram color intact on a light background. Changing this never recompiles diagrams.
+- **TeX engine**: `dvilualatex` matches standard LaTeX across tested math and TikZ blocks and supports `fontspec` system fonts.
+- **TeX binaries & Environment**: GUI launches on macOS do not inherit shell `PATH`; use **Detect** or add directories (such as `/Library/TeX/texbin`) to **Extra PATH directories**. Under Linux Flatpak, host TeX tools run automatically through `flatpak-spawn --host`.
+- **Default preamble**: Loaded before blocks that omit `\documentclass`, including `\pgfplotsset{compat=1.18}`. Inline `\usepackage{...}` works regardless.
+- **Compile timeout & Parallel compiles**: Timeout applies per stage (`TeX`, then `dvisvgm`). `0` parallel compiles picks half your CPU cores (up to 4).
+- **Mobile sharing**: Keeps a copy of compiled SVGs in a visible vault folder so Obsidian Sync, git, or Syncthing delivers them to mobile. Desktop compile failures also sync in `data.json` so mobile displays the error message instead of `"not rendered yet"`.
 
 ## API for other plugins
 
@@ -162,7 +171,7 @@ const tikz = app.plugins.plugins.tikz?.api; // missing in older versions
 const { errors } = (await tikz?.whenSettled(root)) ?? { errors: 0 };
 ```
 
-`whenSettled(root)` resolves once every diagram inside `root` (including hidden ones) shows a diagram, an error or "not rendered yet". `errors` counts the shown diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colours in a dark app (see [Dark mode](#dark-mode)).
+`whenSettled(root)` resolves once every diagram inside `root` (including hidden ones) shows a diagram, an error or "not rendered yet". `errors` counts the shown diagrams that show an error. Set `data-tikz-theme="light"` on `root` to get light colors in a dark app (see [Dark mode](#dark-mode)).
 
 ## Privacy and security
 

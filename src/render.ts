@@ -15,7 +15,7 @@ import type { CompileFailure, CompileResult } from "./compiler/engineSpecs";
 import { normalizePreamble, tidyTikzSource } from "./compiler/wrapSource";
 import type { DesktopServices } from "./desktop";
 import { Limiter, resolveConcurrency } from "./limiter";
-import type { TikzSettings } from "./settingsModel";
+import type { SharedCompileError, TikzSettings } from "./settingsModel";
 import { countShownErrors, waitForSettled } from "./settle";
 import { computeSharedKey } from "./shared/sharedKey";
 import type { SharedDiagramStore } from "./sharedStore";
@@ -63,6 +63,8 @@ export interface RenderDeps {
 	 * `prepareSvgForDisplay` (AGENTS.md rule 7).
 	 */
 	openZoom(svg: string, lightCanvas: boolean): void;
+	recordSharedError?(key: string, error: SharedCompileError): void;
+	clearSharedError?(key: string): void;
 }
 
 export interface TikzRenderer {
@@ -378,6 +380,17 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		}
 
 		this.showError(result);
+		if (settings.shareWithMobile && this.deps.recordSharedError) {
+			const errorInfo: SharedCompileError = {
+				summary: result.summary,
+				...(result.hint ? { hint: result.hint } : {}),
+			};
+			void computeSharedKey(tidied)
+				.then((key) => {
+					if (!this.unloaded) this.deps.recordSharedError?.(key, errorInfo);
+				})
+				.catch(() => undefined);
+		}
 	}
 
 	/**
@@ -391,6 +404,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 		const shared = this.deps.shared;
 		void (async () => {
 			const key = await computeSharedKey(tidied);
+			this.deps.clearSharedError?.(key);
 			if (onlyIfMissing && (await shared.has(key))) return;
 			await shared.write(key, svg);
 		})().catch((error: unknown) => {
@@ -411,7 +425,28 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			return;
 		}
 		if (this.rawSvg) return;
+		const sharedErr = this.deps.getSettings().sharedErrors?.[this.sharedKey];
+		if (sharedErr) {
+			this.showSharedError(sharedErr);
+			return;
+		}
 		this.showPending();
+	}
+
+	private showSharedError(error: SharedCompileError): void {
+		this.errored = true;
+		this.setZoomable(false);
+		this.container.empty();
+		this.container.classList.remove("tikz-light-canvas");
+		const box = this.container.createDiv({ cls: "tikz-error" });
+		box.createDiv({
+			cls: "tikz-error-summary",
+			text: `TikZ compile failed on desktop — ${error.summary}`,
+		});
+		box.createDiv({
+			cls: "tikz-error-hint",
+			text: error.hint ?? "Fix this diagram on desktop to render and sync it.",
+		});
 	}
 
 	/**

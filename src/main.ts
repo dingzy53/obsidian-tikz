@@ -3,6 +3,7 @@ import type { DesktopServices } from "./desktop";
 import { registerTikzProcessor, type TikzRenderer } from "./render";
 import type { TikzApi } from "./settle";
 import { DEFAULT_SETTINGS, mergeSettings, TikzSettingTab, type TikzSettings } from "./settings";
+import type { SharedCompileError } from "./settingsModel";
 import { SharedCleanupModal, SharedSync, describeSyncReport } from "./sharedSync";
 import { SharedDiagramStore } from "./sharedStore";
 import { DiagramZoomModal } from "./zoomModal";
@@ -49,7 +50,11 @@ export default class TikzPlugin extends Plugin {
 		this.shared = new SharedDiagramStore(this.app, () => this.settings.sharedFolder);
 		this.shared.registerEvents((ref) => this.registerEvent(ref));
 		if (this.desktop) {
-			this.sharedSync = new SharedSync(this.app, this.desktop, this.shared, () => this.settings);
+			this.sharedSync = new SharedSync(this.app, this.desktop, this.shared, () => this.settings, {
+				record: (key, error) => this.recordSharedError(key, error),
+				clear: (key) => this.clearSharedError(key),
+				prune: (keepKeys) => this.pruneSharedErrors(keepKeys),
+			});
 		}
 
 		this.addSettingTab(new TikzSettingTab(this.app, this));
@@ -61,6 +66,8 @@ export default class TikzPlugin extends Plugin {
 			shared: this.shared,
 			openSettings: () => this.openSettings(),
 			openZoom: (svg, lightCanvas) => new DiagramZoomModal(this.app, svg, lightCanvas).open(),
+			recordSharedError: (key, error) => this.recordSharedError(key, error),
+			clearSharedError: (key) => this.clearSharedError(key),
 		});
 
 		// `adaptive` colour handling depends on whether the theme is dark, so a
@@ -107,7 +114,9 @@ export default class TikzPlugin extends Plugin {
 		await this.loadSettings();
 		if (this.desktop) this.desktop.cache.maxEntries = this.settings.maxCacheEntries;
 		if (before.shareWithMobile && !this.settings.shareWithMobile) this.sharedSync?.stop();
-		if (before.sharedFolder !== this.settings.sharedFolder) this.reloadSharedDiagrams();
+		if (!this.desktop || before.sharedFolder !== this.settings.sharedFolder) {
+			this.reloadSharedDiagrams();
+		}
 		this.refreshAllDiagrams();
 	}
 
@@ -170,7 +179,38 @@ export default class TikzPlugin extends Plugin {
 
 	async deleteSharedDiagrams(): Promise<void> {
 		const removed = await this.shared.deleteAll();
+		if (Object.keys(this.settings.sharedErrors).length > 0) {
+			this.settings.sharedErrors = {};
+			await this.saveSettings();
+		}
 		new Notice(`Deleted ${removed} shared diagram(s).`);
+	}
+
+	private recordSharedError(key: string, error: SharedCompileError): void {
+		const prev = this.settings.sharedErrors[key];
+		if (prev && prev.summary === error.summary && prev.hint === error.hint) return;
+		this.settings.sharedErrors = { ...this.settings.sharedErrors, [key]: error };
+		void this.saveSettings();
+	}
+
+	private clearSharedError(key: string): void {
+		if (!(key in this.settings.sharedErrors)) return;
+		const next = { ...this.settings.sharedErrors };
+		delete next[key];
+		this.settings.sharedErrors = next;
+		void this.saveSettings();
+	}
+
+	private pruneSharedErrors(keepKeys: ReadonlySet<string>): void {
+		let changed = false;
+		const next: Record<string, SharedCompileError> = {};
+		for (const [key, value] of Object.entries(this.settings.sharedErrors)) {
+			if (keepKeys.has(key)) next[key] = value;
+			else changed = true;
+		}
+		if (!changed) return;
+		this.settings.sharedErrors = next;
+		void this.saveSettings();
 	}
 
 	private openSettings(): void {
