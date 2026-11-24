@@ -1,10 +1,58 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { env } from 'node:process';
-import { parseObsidianVersions } from 'wdio-obsidian-service';
+import { obsidianBetaAvailable, parseObsidianVersions } from 'wdio-obsidian-service';
+
+interface ObsidianVersionEntry {
+	version: string;
+	isBeta?: boolean;
+	downloads?: { apk?: string };
+}
+
+function compareSemver(a: string, b: string): number {
+	const pa = a.split('.').map(Number);
+	const pb = b.split('.').map(Number);
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
+}
+
+function resolveEarliestPublicAndroid(dir: string, minAppVersion: string | undefined): string {
+	if (!minAppVersion) return 'earliest';
+	try {
+		const raw = JSON.parse(readFileSync(path.join(dir, 'obsidian-versions.json'), 'utf8')) as {
+			versions?: ObsidianVersionEntry[];
+		};
+		const match = raw.versions?.find(
+			(entry) =>
+				!entry.isBeta &&
+				Boolean(entry.downloads?.apk) &&
+				compareSemver(entry.version, minAppVersion) >= 0,
+		);
+		return match?.version ?? 'latest';
+	} catch {
+		return 'latest';
+	}
+}
+
+function rewriteVersionSpec(spec: string, earliestApp: string, allowBeta: boolean): string {
+	if (allowBeta) return spec;
+	return spec
+		.split(/([ ,]+)/)
+		.map((token) => {
+			if (!token || /^[ ,]+$/.test(token)) return token;
+			const [appVer, installerVer] = token.split('/');
+			if (appVer !== 'earliest') return token;
+			return installerVer !== undefined ? `${earliestApp}/${installerVer}` : earliestApp;
+		})
+		.join('');
+}
 
 const manifest = JSON.parse(readFileSync(path.resolve('manifest.json'), 'utf8')) as {
 	isDesktopOnly?: boolean;
+	minAppVersion?: string;
 };
 
 if (manifest.isDesktopOnly) {
@@ -13,10 +61,14 @@ if (manifest.isDesktopOnly) {
 
 const cacheDir = path.resolve(env.OBSIDIAN_CACHE_DIR || '.obsidian-cache');
 const defaultVersions = 'earliest/earliest latest/latest';
-const versions = await parseObsidianVersions(
+const betaAvailable = await obsidianBetaAvailable({ cacheDir });
+const earliestPublic = resolveEarliestPublicAndroid(cacheDir, manifest.minAppVersion);
+const resolvedSpec = rewriteVersionSpec(
 	env.OBSIDIAN_MOBILE_VERSIONS ?? env.OBSIDIAN_VERSIONS ?? defaultVersions,
-	{ cacheDir },
+	earliestPublic,
+	betaAvailable,
 );
+const versions = await parseObsidianVersions(resolvedSpec, { cacheDir, platform: 'android' });
 
 if (env.CI) {
 	console.log('obsidian-cache-key:', JSON.stringify(versions));
