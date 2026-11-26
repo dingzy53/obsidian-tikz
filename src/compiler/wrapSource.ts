@@ -35,13 +35,8 @@ export const LEGACY_DEFAULT_PREAMBLE = [
 	"\\usepackage{array}",
 ].join("\n");
 
-/**
- * Convenience packages seeded into the default preamble. This is a *default*,
- * not a restriction: any package installed in the user's TeX distribution can
- * be loaded with an in-block `\usepackage{...}`. The list mirrors what the
- * upstream TikZJax plugin hardcoded, so existing notes keep working.
- */
-export const DEFAULT_PREAMBLE = [
+/** The default preamble of 1.0–1.2, migrated to {@link DEFAULT_PREAMBLE}. */
+export const V1_DEFAULT_PREAMBLE = [
 	"\\usepackage{tikz}",
 	"\\usepackage{tikz-cd}",
 	"\\usepackage{circuitikz}",
@@ -55,6 +50,111 @@ export const DEFAULT_PREAMBLE = [
 	"\\usepackage{array}",
 ].join("\n");
 
+/**
+ * TikZ libraries every wrapped block gets. Two groups:
+ *
+ * - the everyday ones a 593-diagram vault audit found missing most often
+ *   (`diamond`, `-{Stealth}`, `fit=…`, …): arrows.meta, calc,
+ *   shapes.geometric, decorations.pathreplacing, decorations.markings,
+ *   backgrounds, fit, matrix;
+ * - the ones the 1.0–1.2 preamble loaded *implicitly* through tikz-cd,
+ *   circuitikz and pgfplots (found by diffing the files each preamble reads):
+ *   arrows (`-latex'`), plotmarks (`mark=square*`), decorations.pathmorphing
+ *   (`snake`), 3d (`canvas is xy plane`), quotes and bending. Keeping them
+ *   means a diagram that relied on one of them without saying so renders
+ *   exactly as before now that those packages load only on demand. bending
+ *   in particular changes how arrow tips sit on curves, so dropping it would
+ *   have changed existing output silently.
+ *
+ * Libraries are cheap (tens of milliseconds); the packages are not.
+ *
+ * `positioning` is deliberately **not** here, although its absence caused 16
+ * of those failures: it redefines `above right=<distance>` and friends even
+ * without `of`, which moved labels in 65 of the 593 diagrams (every one that
+ * used a diagonal placement with a distance and no positioning of its own).
+ * A block that needs `right=of a` gets a hint naming the library instead.
+ */
+export const DEFAULT_TIKZ_LIBRARIES = [
+	"arrows.meta", "calc", "shapes.geometric", "decorations.pathreplacing",
+	"decorations.markings", "backgrounds", "fit", "matrix",
+	"arrows", "plotmarks", "decorations.pathmorphing", "3d", "quotes", "bending",
+];
+
+/**
+ * Convenience packages seeded into the default preamble. This is a *default*,
+ * not a restriction: any package installed in the user's TeX distribution can
+ * be loaded with an in-block `\usepackage{...}`. The heavy packages upstream
+ * TikZJax hardcoded (pgfplots, tikz-cd, circuitikz, chemfig, tikz-3dplot) are
+ * {@link ON_DEMAND_PACKAGES} instead, so existing notes keep working. `ifthen`
+ * came with them before and is kept for `\ifthenelse`.
+ */
+export const DEFAULT_PREAMBLE = [
+	"\\usepackage{tikz}",
+	`\\usetikzlibrary{${DEFAULT_TIKZ_LIBRARIES.join(", ")}}`,
+	"\\usepackage{amsmath}",
+	"\\usepackage{amssymb}",
+	"\\usepackage{amsfonts}",
+	"\\usepackage{array}",
+	"\\usepackage{ifthen}",
+].join("\n");
+
+export interface OnDemandPackage {
+	/** Package name, as in `\\usepackage{<name>}`. */
+	name: string;
+	/** Preamble lines that load it. */
+	lines: string[];
+	/** Matches (comment-masked) block source that uses it. */
+	usedBy: RegExp;
+}
+
+/**
+ * The heavy packages, loaded only for blocks that use them: together they
+ * made every compile about a third slower (1,018 ms against 686 ms for a
+ * plain picture in the audit). Detection does not have to be perfect: a block
+ * that fails without them is compiled once more with all of them (see
+ * `compileTikz`), so a miss costs time, never a diagram. circuitikz, for one,
+ * is often used only through `to[R]` inside a plain `tikzpicture`.
+ */
+export const ON_DEMAND_PACKAGES: readonly OnDemandPackage[] = [
+	{
+		name: "tikz-cd",
+		lines: ["\\usepackage{tikz-cd}"],
+		usedBy: /\btikzcd\b/,
+	},
+	{
+		name: "circuitikz",
+		lines: ["\\usepackage{circuitikz}"],
+		usedBy: /circuitikz|\\ctikzset\b|\bto\s*\[\s*(?:short|open|R|C|L|V|I|D|battery1?|lamp|vR|cV|cI|sV|sI|american|european|ammeter|voltmeter|generic|switch|spst|nos|ncs|led|Do|Zo|fuse|resistor|capacitor|inductor|vsource|isource)\b/,
+	},
+	{
+		name: "pgfplots",
+		lines: ["\\usepackage{pgfplots}", "\\pgfplotsset{compat=1.18}"],
+		usedBy:
+			/\\begin\s*\{\s*(?:axis|semilogxaxis|semilogyaxis|loglogaxis|polaraxis|groupplot|ternaryaxis|smithchart)\s*\}|\\(?:addplot|addlegendentry|legend|pgfplots\w*|usepgfplotslibrary|nextgroupplot)\b/,
+	},
+	{
+		name: "chemfig",
+		lines: ["\\usepackage{chemfig}"],
+		usedBy: /\\(?:chemfig|chemname|setchemfig|schemestart|schemestop|chemabove|chembelow|chemmove|lewis|Lewis|chemsign|chemrel|setatomsep|setbondoffset)\b/,
+	},
+	{
+		name: "tikz-3dplot",
+		lines: ["\\usepackage{tikz-3dplot}"],
+		usedBy: /\\tdplot\w*/,
+	},
+];
+
+/**
+ * How {@link ON_DEMAND_PACKAGES} are loaded: only for blocks that use them,
+ * for every block (the 1.0–1.2 behaviour), or never (the preamble alone).
+ */
+export type PackageLoading = "on-demand" | "all" | "none";
+
+/** True when `text` loads package `name` (possibly among others, with options). */
+function loadsPackage(text: string, name: string): boolean {
+	return new RegExp(`\\\\(?:usepackage|RequirePackage)\\s*(?:\\[[^\\]]*\\])?\\s*\\{[^}]*\\b${name.replace(/[-]/g, "\\-")}\\b[^}]*\\}`).test(text);
+}
+
 export type SourceTier = 1 | 2 | 3;
 
 const BEGIN_DOCUMENT = /\\begin\s*\{\s*document\s*\}/;
@@ -66,6 +166,8 @@ export interface WrapOptions {
 	preamble: string;
 	/** Emit {@link PGF_DRIVER_LINE} ahead of pgf/tikz. False for `pdflatex`. */
 	injectDvisvgmDriver: boolean;
+	/** Which {@link ON_DEMAND_PACKAGES} to add after the preamble. Default `"none"`. */
+	packages?: PackageLoading;
 }
 
 export interface WrappedSource {
@@ -77,6 +179,14 @@ export interface WrappedSource {
 	tidiedSource: string;
 	/** Packages hoisted out of a tier-3 block into the preamble. */
 	hoisted: string[];
+	/** On-demand packages added for this block. */
+	loaded: string[];
+	/**
+	 * On-demand packages left out because the block did not seem to use them
+	 * (only with `"on-demand"`). A failed compile with any is worth a retry
+	 * with `"all"`.
+	 */
+	skipped: string[];
 }
 
 /**
@@ -243,7 +353,26 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		// legal LaTeX and is the only way to get the driver in ahead of the
 		// user's own `\usepackage{tikz}`.
 		const tex = driverLine ? `${driverLine}\n${tidiedSource}` : tidiedSource;
-		return { tex, tier, tidiedSource, hoisted: [] };
+		return { tex, tier, tidiedSource, hoisted: [], loaded: [], skipped: [] };
+	}
+
+	// Heavy packages, after the user's preamble (whose own copy, with options,
+	// then wins) and before the block's libraries, which may need them.
+	const mode = options.packages ?? "none";
+	const code = maskComments(tidiedSource);
+	const loaded: string[] = [];
+	const skipped: string[] = [];
+	const packageLines: string[] = [];
+	for (const pkg of ON_DEMAND_PACKAGES) {
+		// Already loaded by the preamble or the block itself (whose own
+		// options and settings, such as a different pgfplots compat, win).
+		if (mode === "none" || loadsPackage(preamble, pkg.name) || loadsPackage(code, pkg.name)) continue;
+		if (mode === "all" || pkg.usedBy.test(code)) {
+			loaded.push(pkg.name);
+			packageLines.push(...pkg.lines);
+		} else {
+			skipped.push(pkg.name);
+		}
 	}
 
 	const withContent = (parts: string[]): string => parts.filter((part) => part.length > 0).join("\n");
@@ -260,11 +389,12 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 			driverLine,
 			...early,
 			preamble,
+			...packageLines,
 			...late,
 			...rest,
 			document,
 		]);
-		return { tex, tier, tidiedSource, hoisted: [] };
+		return { tex, tier, tidiedSource, hoisted: [], loaded, skipped };
 	}
 
 	// Tier 3: `\usepackage` and friends are preamble-only, so lift them out of
@@ -275,11 +405,12 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		driverLine,
 		...early,
 		preamble,
+		...packageLines,
 		...late,
 		"\\begin{document}",
 		rest.join("\n"),
 		"\\end{document}",
 	]);
 
-	return { tex, tier, tidiedSource, hoisted: [...early, ...late] };
+	return { tex, tier, tidiedSource, hoisted: [...early, ...late], loaded, skipped };
 }

@@ -4,7 +4,12 @@
  */
 
 import { DEFAULT_ENGINE, DEFAULT_TIMEOUT_SECONDS, ENGINE_IDS, type EngineId } from "./compiler/engineSpecs";
-import { DEFAULT_PREAMBLE, LEGACY_DEFAULT_PREAMBLE, normalizePreamble } from "./compiler/wrapSource";
+import {
+	DEFAULT_PREAMBLE,
+	LEGACY_DEFAULT_PREAMBLE,
+	normalizePreamble,
+	V1_DEFAULT_PREAMBLE,
+} from "./compiler/wrapSource";
 import { DEFAULT_SHARED_FOLDER, validateSharedFolder } from "./shared/folder";
 import type { ColorAdaptation } from "./svg";
 
@@ -12,6 +17,10 @@ export interface SharedCompileError {
 	summary: string;
 	hint?: string;
 }
+
+export type HeavyPackageLoading = "on-demand" | "all";
+
+const HEAVY_PACKAGE_MODES: HeavyPackageLoading[] = ["on-demand", "all"];
 
 export interface TikzSettings {
 	/**
@@ -29,6 +38,11 @@ export interface TikzSettings {
 	extraPathDirs: string[];
 	/** Multi-line `\usepackage{...}` block used for blocks that need wrapping. */
 	defaultPreamble: string;
+	/**
+	 * When pgfplots, tikz-cd, circuitikz, chemfig and tikz-3dplot are loaded:
+	 * only for blocks that use them, or for every block (the 1.0–1.2 preamble).
+	 */
+	heavyPackages: HeavyPackageLoading;
 	/**
 	 * `-shell-escape` opt-in. Off by default, always (AGENTS.md rule 3): with
 	 * it on, opening a note can run arbitrary shell commands.
@@ -61,8 +75,9 @@ export interface TikzSettings {
 /**
  * 1: everything before 1.3 (no `settingsVersion` key).
  * 2: 1.3, default cache size 500 -> 2000.
+ * 3: 1.3, lighter default preamble (heavy packages load on demand).
  */
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 export const DEFAULT_SETTINGS: TikzSettings = {
 	settingsVersion: SETTINGS_VERSION,
@@ -71,6 +86,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	dvisvgmPath: "",
 	extraPathDirs: [],
 	defaultPreamble: DEFAULT_PREAMBLE,
+	heavyPackages: "on-demand",
 	allowShellEscape: false,
 	compileTimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
 	maxConcurrentCompiles: 0,
@@ -147,14 +163,21 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	if (!ENGINE_IDS.includes(merged.engine)) merged.engine = DEFAULT_ENGINE;
 	if (!Array.isArray(merged.extraPathDirs)) merged.extraPathDirs = [];
 	else merged.extraPathDirs = merged.extraPathDirs.filter((dir) => typeof dir === "string");
+	const storedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 1;
 	if (typeof merged.defaultPreamble !== "string") {
 		merged.defaultPreamble = DEFAULT_PREAMBLE;
-	} else if (normalizePreamble(merged.defaultPreamble) === LEGACY_DEFAULT_PREAMBLE) {
+	} else if (
+		storedVersion < 3 &&
+		[LEGACY_DEFAULT_PREAMBLE, V1_DEFAULT_PREAMBLE].includes(normalizePreamble(merged.defaultPreamble))
+	) {
+		// An untouched old default: `saveData` wrote it back as a value. The
+		// new one loads the same heavy packages on demand (and the libraries
+		// they brought along always). Edited preambles are kept as they are.
 		merged.defaultPreamble = DEFAULT_PREAMBLE;
 	}
+	if (!HEAVY_PACKAGE_MODES.includes(merged.heavyPackages)) merged.heavyPackages = DEFAULT_SETTINGS.heavyPackages;
 	merged.compileTimeoutSeconds = sanitizeTimeoutSeconds(merged.compileTimeoutSeconds);
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
-	const storedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 1;
 	// Pre-1.3 data with exactly the old default: `saveData` wrote it back as a
 	// value, not a choice, so it follows the new default. Once migrated (or
 	// when set in the settings tab) 500 is kept like any other value.

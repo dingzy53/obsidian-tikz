@@ -23,7 +23,7 @@ import {
 	scratchRoot,
 	type ResolvedBinary,
 } from "./pathResolve";
-import { normalizePreamble, wrapTikzSource } from "./wrapSource";
+import { normalizePreamble, wrapTikzSource, type PackageLoading, type WrappedSource } from "./wrapSource";
 
 import {
 	DEFAULT_TIMEOUT_SECONDS,
@@ -467,12 +467,17 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
 	const workDir = options.workDir ?? createWorkDir();
 
-	const wrapped = wrapTikzSource({
-		source: options.source,
-		preamble: normalizePreamble(options.preamble),
-		injectDvisvgmDriver: spec.injectDvisvgmDriver,
-	});
-	const tex = wrapped.tex;
+	const wrap = (packages: PackageLoading): WrappedSource =>
+		wrapTikzSource({
+			source: options.source,
+			preamble: normalizePreamble(options.preamble),
+			injectDvisvgmDriver: spec.injectDvisvgmDriver,
+			packages,
+		});
+	let wrapped = wrap(options.packages ?? "on-demand");
+	// `let`: a retry with every package replaces it, and failures report
+	// the document that was actually compiled last.
+	let tex = wrapped.tex;
 
 	const fail = (
 		kind: CompileFailureKind,
@@ -548,15 +553,6 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 
 	// ---- stage 1: tex → dvi/xdv/pdf ---------------------------------------
 	const texFile = `${jobName}.tex`;
-	try {
-		await fsp.writeFile(path.join(workDir, texFile), tex, "utf8");
-	} catch (error) {
-		return fail(
-			"io-error",
-			`Could not write ${texFile}`,
-			error instanceof Error ? error.message : String(error),
-		);
-	}
 
 	const engineArgs = [
 		"-interaction=nonstopmode",
@@ -568,18 +564,41 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		texFile,
 	];
 
-	const engineRun = await runProcess(engineBin, engineArgs, {
-		cwd: workDir,
-		env,
-		timeoutMs,
-		viaHost: engineResolved.viaHost,
-		extraDirs: options.extraPathDirs,
-	});
-	const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
-	const engineLog = joinLog([
-		engineRun.stderr,
-		engineLogFile ?? engineRun.stdout,
-	]);
+	let engineRun: ProcessResult;
+	let engineLog: string;
+	for (;;) {
+		try {
+			await fsp.writeFile(path.join(workDir, texFile), tex, "utf8");
+		} catch (error) {
+			return fail(
+				"io-error",
+				`Could not write ${texFile}`,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+		engineRun = await runProcess(engineBin, engineArgs, {
+			cwd: workDir,
+			env,
+			timeoutMs,
+			viaHost: engineResolved.viaHost,
+			extraDirs: options.extraPathDirs,
+		});
+		const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
+		engineLog = joinLog([engineRun.stderr, engineLogFile ?? engineRun.stdout]);
+
+		// Heavy packages are loaded only when a block seems to use them. If it
+		// failed without some of them, compile once more with all of them (the
+		// 1.0–1.2 preamble), so a missed detection costs time, never a
+		// diagram. Not after a timeout (that would double the wait) or a
+		// spawn failure (nothing to do with packages).
+		const failed = engineRun.code !== 0 || /^!\s?/m.test(engineLog);
+		if (failed && !engineRun.timedOut && !engineRun.spawnError && wrapped.skipped.length > 0) {
+			wrapped = wrap("all");
+			tex = wrapped.tex;
+			continue;
+		}
+		break;
+	}
 
 	if (engineRun.timedOut) {
 		return fail(

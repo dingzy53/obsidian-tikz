@@ -118,6 +118,7 @@ export function startCompile(
 				enginePath: settings.enginePath,
 				dvisvgmPath: settings.dvisvgmPath,
 				extraPathDirs: settings.extraPathDirs,
+				packages: settings.heavyPackages,
 				allowShellEscape: settings.allowShellEscape,
 				timeoutMs: settings.compileTimeoutSeconds * 1000,
 			}),
@@ -354,6 +355,7 @@ class DiagramRenderComponent extends MarkdownRenderChild {
 			source: tidied,
 			preamble,
 			engine: settings.engine,
+			packages: settings.heavyPackages,
 		});
 
 		this.showLoading();

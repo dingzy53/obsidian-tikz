@@ -4,6 +4,8 @@
  * itself (`engine.ts`) must never load.
  */
 
+import type { PackageLoading } from "./wrapSource";
+
 export type EngineId = "dvilualatex" | "latex" | "xelatex" | "pdflatex";
 
 export const ENGINE_IDS: readonly EngineId[] = ["dvilualatex", "latex", "xelatex", "pdflatex"];
@@ -86,6 +88,12 @@ export interface CompileOptions {
 	dvisvgmPath?: string;
 	/** Extra directories prepended to the child `PATH`. */
 	extraPathDirs?: string[];
+	/**
+	 * When the heavy packages (pgfplots, tikz-cd, circuitikz, chemfig,
+	 * tikz-3dplot) are loaded. Default `"on-demand"`: only for blocks that use
+	 * them, with one retry with all of them if a block fails without some.
+	 */
+	packages?: PackageLoading;
 	/** Opt-in `\write18` support. Off by default (AGENTS.md rule 3). */
 	allowShellEscape?: boolean;
 	/** Per-stage timeout. Defaults to {@link DEFAULT_TIMEOUT_SECONDS}. */

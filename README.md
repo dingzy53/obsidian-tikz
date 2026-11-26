@@ -147,7 +147,8 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 | **TeX engine** | `dvilualatex` (recommended), `latex`, `xelatex`, or `pdflatex`. | `dvilualatex` |
 | **Binary paths** | Custom path overrides for TeX engine and `dvisvgm`, with an **Auto-detect** button. | Auto (`PATH`) |
 | **Extra PATH** | Extra directories to append to `PATH` at runtime. | Empty |
-| **Default preamble** | Common packages injected when no `\documentclass` is provided. | Standard TikZ packages |
+| **Default preamble** | Common packages injected when no `\documentclass` is provided. | TikZ, common libraries, AMS math |
+| **Heavy packages** | When pgfplots, tikz-cd, circuitikz, chemfig and tikz-3dplot load: only for diagrams that use them, or always. | When a diagram uses them |
 | **Allow shell escape** | Enables `-shell-escape` (danger: executes arbitrary system commands). | `false` |
 | **Compile timeout** | Maximum seconds per compilation stage (1–3600) before killing the process tree. Time spent queued does not count. | `20` |
 | **Parallel compiles** | How many diagrams compile at once; the rest queue. `0` = automatic (half the CPU cores, 1–4). | `0` |
@@ -171,7 +172,8 @@ In **Adaptive** mode, explicit white fills (such as `fill=white` on a label mask
 - **Dark mode colors**: Diagrams are authored for light paper. Adaptive preserves hues while inverting lightness (and re-tinting light fills onto the dark page) at display time; Light canvas leaves every diagram color intact on a light background. Changing this never recompiles diagrams.
 - **TeX engine**: `dvilualatex` matches standard LaTeX across tested math and TikZ blocks and supports `fontspec` system fonts.
 - **TeX binaries & Environment**: GUI launches on macOS do not inherit shell `PATH`; use **Detect** or add directories (such as `/Library/TeX/texbin`) to **Extra PATH directories**. Under Linux Flatpak, host TeX tools run automatically through `flatpak-spawn --host`.
-- **Default preamble**: Loaded before blocks that omit `\documentclass`, including `\pgfplotsset{compat=1.18}`. Inline `\usepackage{...}` works regardless.
+- **Default preamble**: Loaded before blocks that omit `\documentclass`. It loads TikZ with the everyday libraries (`arrows.meta`, `calc`, `shapes.geometric`, `decorations.*`, `backgrounds`, `fit`, `matrix`, …) and the AMS math packages. `positioning` is not preloaded on purpose: it changes what `above right=4pt` means in diagrams that never asked for it (the error hint names it when `right=of …` needs it). Inline `\usepackage{...}` and `\usetikzlibrary{...}` work regardless. A preamble saved unchanged from 1.0–1.2 is moved to the new default once; an edited one is kept.
+- **Heavy packages**: pgfplots (with `compat=1.18`), tikz-cd, circuitikz, chemfig and tikz-3dplot made every compile about a third slower, so by default they load only for diagrams that use them (an `axis`, `tikzcd`, `\chemfig`, `\tdplot…`, a circuitikz component, …). A diagram that fails without them is compiled once more with all of them, so nothing that worked before stops working; it just takes a second compile. **Always** restores the 1.0–1.2 behaviour. Changing this, or updating to 1.3, recompiles diagrams once.
 - **Compile timeout & Parallel compiles**: Timeout applies per stage (`TeX`, then `dvisvgm`). `0` parallel compiles picks half your CPU cores (up to 4).
 - **Mobile sharing**: Keeps a copy of compiled SVGs in a visible vault folder so Obsidian Sync, git, or Syncthing delivers them to mobile. Desktop compile failures also sync in `data.json` so mobile displays the error message instead of `"not rendered yet"`.
 

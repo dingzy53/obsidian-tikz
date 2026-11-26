@@ -264,6 +264,9 @@ positioning}
 			const result = await compileTikz({
 				source,
 				preamble: "\\usepackage{tikz}\n\\usepackage{amsmath}",
+				// Just this preamble: a retry with the heavy packages would load
+				// arrows.meta (through tikz-cd) and hide the case under test.
+				packages: "none",
 				engine: "dvilualatex",
 				timeoutMs: 30_000,
 			});
@@ -271,6 +274,33 @@ positioning}
 			if (!result.ok) expect(result.hint).toContain(expected);
 		}
 	}, TEST_TIMEOUT * 2);
+
+	it("loads a heavy package only for blocks that use it", async () => {
+		const plain = expectRendered(await compile(block("\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}")));
+		expect(plain).toContain("<svg");
+		const result = await compile(block("\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}"));
+		expect(result.tex).not.toContain("{pgfplots}");
+		expect(result.tex).not.toContain("{circuitikz}");
+	}, TEST_TIMEOUT);
+
+	it("retries with every heavy package when a block fails without one it was not seen to use", async () => {
+		// `to[twoport]` is circuitikz, but not one of the components detection
+		// looks for: the first compile fails, the retry with all packages works.
+		const result = await compile(block(`\\begin{tikzpicture}
+\\draw (0,0) to[twoport] (2,0);
+\\end{tikzpicture}`));
+		expectRendered(result);
+		expect(result.tex).toContain("\\usepackage{circuitikz}");
+		expect(result.tex).toContain("\\usepackage{pgfplots}");
+	}, TEST_TIMEOUT);
+
+	it("reports the error of the full-package compile when the retry fails too", async () => {
+		const result = await compile(block("\\begin{tikzpicture}\\thiscommanddoesnotexist\\end{tikzpicture}"));
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.summary).toContain("Undefined control sequence");
+		expect(result.tex).toContain("\\usepackage{pgfplots}");
+	}, TEST_TIMEOUT);
 
 	it("times out and kills the process instead of hanging", async () => {
 		const started = Date.now();

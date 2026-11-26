@@ -20,8 +20,11 @@ import { nodeApi } from "./nodeApi";
  * previously cached SVGs (dvisvgm flags, pgf driver injection, post-processing
  * conventions). Without this, users would keep stale output forever, since the
  * cache key is otherwise purely content-addressed.
+ *
+ * 2 (1.3): heavy packages load on demand, and multi-page output fails
+ *   instead of showing page 1 only.
  */
-export const CACHE_VERSION = 1;
+export const CACHE_VERSION = 2;
 
 /** A hit refreshes an entry's mtime at most this often. */
 const TOUCH_INTERVAL_MS = 60_000;
@@ -33,6 +36,8 @@ export interface CacheKeyInput {
 	preamble: string;
 	/** Engine id (implies the pgf driver / dvisvgm flags in use). */
 	engine: string;
+	/** How the heavy packages are loaded (`"on-demand"` / `"all"`). */
+	packages: string;
 }
 
 /**
@@ -47,6 +52,7 @@ export function computeCacheKey(input: CacheKeyInput): string {
 	const hash = crypto.createHash("sha256");
 	hash.update(`v${CACHE_VERSION}\u0000`);
 	hash.update(`${input.engine}\u0000`);
+	hash.update(`${input.packages}\u0000`);
 	hash.update(`${input.source}\u0000`);
 	hash.update(input.preamble);
 	return hash.digest("hex");

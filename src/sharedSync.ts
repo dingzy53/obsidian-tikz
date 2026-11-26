@@ -146,6 +146,7 @@ export class SharedSync {
 			source: tidied,
 			preamble: normalizePreamble(settings.defaultPreamble),
 			engine: settings.engine,
+			packages: settings.heavyPackages,
 		});
 	}
 
