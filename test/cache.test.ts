@@ -5,7 +5,12 @@ import * as path from "node:path";
 import { CACHE_VERSION, DiagramCache, computeCacheKey } from "../src/cache";
 
 describe("computeCacheKey", () => {
-	const base = { source: "\\draw (0,0);", preamble: "\\usepackage{tikz}", engine: "dvilualatex" };
+	const base = {
+		source: "\\draw (0,0);",
+		preamble: "\\usepackage{tikz}",
+		engine: "dvilualatex",
+		packages: "on-demand",
+	};
 
 	it("is stable for identical input", () => {
 		expect(computeCacheKey(base)).toBe(computeCacheKey({ ...base }));
@@ -21,6 +26,10 @@ describe("computeCacheKey", () => {
 
 	it("changes when the engine changes", () => {
 		expect(computeCacheKey(base)).not.toBe(computeCacheKey({ ...base, engine: "pdflatex" }));
+	});
+
+	it("changes when the heavy packages are loaded differently", () => {
+		expect(computeCacheKey(base)).not.toBe(computeCacheKey({ ...base, packages: "all" }));
 	});
 
 	it("is a hex sha-256 digest", () => {

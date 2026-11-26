@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileTikz, type CompileOptions, type CompileResult } from "../src/compiler/engine";
 import { DEFAULT_PREAMBLE } from "../src/compiler/wrapSource";
+import { prepareSvgForDisplay } from "../src/svg";
 
 const RUN = process.env.TIKZ_NATIVE_INTEGRATION === "1";
 const TEST_TIMEOUT = 90_000;
@@ -189,6 +190,116 @@ describe.skipIf(!RUN)("M1 acceptance matrix (real TeX)", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.hint).toContain("thispackagedoesnotexist");
+	}, TEST_TIMEOUT);
+
+	it("fails loudly when a block produces more than one page, instead of dropping page 2", async () => {
+		// dvisvgm converts page 1 only and exits 0 ("1 of 2 pages converted").
+		const result = await compile(`\\documentclass[tikz]{standalone}
+\\begin{document}
+\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}
+\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}
+\\end{document}`);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.kind).toBe("multi-page");
+		expect(result.summary).toContain("2 pages");
+		expect(result.hint).toContain("```tikz block");
+	}, TEST_TIMEOUT);
+
+	it("displays a 30-sample pgfplots surf, whose raw SVG nests thousands of groups", async () => {
+		const svg = expectRendered(await compile(block(`\\begin{tikzpicture}
+\\begin{axis}
+\\addplot3[surf, samples=30, opacity=0.9, domain=-2:2] {exp(-x^2-y^2)};
+\\end{axis}
+\\end{tikzpicture}`)));
+		const depth = (text: string): number => {
+			let current = 0;
+			let max = 0;
+			for (const match of text.matchAll(/<(\/?)g\b[^>]*?(\/?)>/g)) {
+				if (match[1]) current--;
+				else if (!match[2]) max = Math.max(max, ++current);
+			}
+			return max;
+		};
+		expect(depth(svg)).toBeGreaterThan(1000);
+		for (const isDark of [false, true]) {
+			const started = Date.now();
+			const shown = prepareSvgForDisplay(svg, "p-", "adaptive", isDark);
+			// Unflattened, SVGO took 5.8 s here and left it 837 deep.
+			expect(depth(shown)).toBeLessThan(16);
+			expect(Date.now() - started).toBeLessThan(3000);
+			// Every facet survives (one path each, plus axes and ticks).
+			expect(pathCount(shown)).toBeGreaterThan(29 * 29);
+		}
+	}, TEST_TIMEOUT);
+
+	it("compiles a \\usetikzlibrary written over two lines", async () => {
+		expectRendered(await compile(block(`\\usetikzlibrary{arrows.meta,
+positioning}
+\\begin{tikzpicture}\\node (a) {A}; \\node[right=of a] {B};\\end{tikzpicture}`)));
+	}, TEST_TIMEOUT);
+
+	it("compiles \\DeclareMathOperator in a bare snippet", async () => {
+		expectRendered(await compile(block(`\\DeclareMathOperator{\\tr}{tr}
+\\begin{tikzpicture}\\node {$\\tr A$};\\end{tikzpicture}`)));
+	}, TEST_TIMEOUT);
+
+	it("turns dvisvgm's exit code into its own error line and a hint", async () => {
+		const result = await compile(block(`\\begin{tikzpicture}\\node[font=\\scriptsize\\color{red}] {A}; \\draw (0,0)--(1,0);\\end{tikzpicture}`));
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.kind).toBe("dvisvgm-error");
+		expect(result.summary).toContain("missing closing tag");
+		expect(result.hint).toContain("text=<colour>");
+	}, TEST_TIMEOUT);
+
+	it("gives actionable hints for the most common missing-library and MathJax mistakes", async () => {
+		const cases: [string, string][] = [
+			["\\begin{tikzpicture}\\node at (0,0) {$x \\lt 1$};\\end{tikzpicture}", "`<` and `>`"],
+			["\\begin{tikzpicture}\\node (a) {A}; \\node[right=of a] {B};\\end{tikzpicture}", "positioning"],
+			["\\begin{tikzpicture}\\node[diamond, draw] {A};\\end{tikzpicture}", "shapes.geometric"],
+			["\\begin{tikzpicture}\\draw[-{Stealth}] (0,0)--(1,0);\\end{tikzpicture}", "arrows.meta"],
+		];
+		for (const [source, expected] of cases) {
+			const result = await compileTikz({
+				source,
+				preamble: "\\usepackage{tikz}\n\\usepackage{amsmath}",
+				// Just this preamble: a retry with the heavy packages would load
+				// arrows.meta (through tikz-cd) and hide the case under test.
+				packages: "none",
+				engine: "dvilualatex",
+				timeoutMs: 30_000,
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.hint).toContain(expected);
+		}
+	}, TEST_TIMEOUT * 2);
+
+	it("loads a heavy package only for blocks that use it", async () => {
+		const plain = expectRendered(await compile(block("\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}")));
+		expect(plain).toContain("<svg");
+		const result = await compile(block("\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}"));
+		expect(result.tex).not.toContain("{pgfplots}");
+		expect(result.tex).not.toContain("{circuitikz}");
+	}, TEST_TIMEOUT);
+
+	it("retries with every heavy package when a block fails without one it was not seen to use", async () => {
+		// `to[twoport]` is circuitikz, but not one of the components detection
+		// looks for: the first compile fails, the retry with all packages works.
+		const result = await compile(block(`\\begin{tikzpicture}
+\\draw (0,0) to[twoport] (2,0);
+\\end{tikzpicture}`));
+		expectRendered(result);
+		expect(result.tex).toContain("\\usepackage{circuitikz}");
+		expect(result.tex).toContain("\\usepackage{pgfplots}");
+	}, TEST_TIMEOUT);
+
+	it("reports the error of the full-package compile when the retry fails too", async () => {
+		const result = await compile(block("\\begin{tikzpicture}\\thiscommanddoesnotexist\\end{tikzpicture}"));
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.summary).toContain("Undefined control sequence");
+		expect(result.tex).toContain("\\usepackage{pgfplots}");
 	}, TEST_TIMEOUT);
 
 	it("times out and kills the process instead of hanging", async () => {

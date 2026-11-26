@@ -14,6 +14,7 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import { normalizePreamble } from "./compiler/wrapSource";
 import type { DesktopServices } from "./desktop";
+import { resolveConcurrency } from "./limiter";
 import { startCompile } from "./render";
 import type { SharedCompileError, TikzSettings } from "./settingsModel";
 import { extractTikzSources, mayContainTikz } from "./shared/scan";
@@ -145,6 +146,7 @@ export class SharedSync {
 			source: tidied,
 			preamble: normalizePreamble(settings.defaultPreamble),
 			engine: settings.engine,
+			packages: settings.heavyPackages,
 		});
 	}
 
@@ -169,9 +171,15 @@ export class SharedSync {
 
 			let rendered = 0;
 			let failed = 0;
-			for (const [index, [key, tidied]] of todo.entries()) {
-				if (!this.isActive()) return { rendered, failed, cancelled: true };
-				notice.setMessage(`Rendering diagrams for mobile… ${index + 1}/${todo.length}`);
+			let finished = 0;
+			let next = 0;
+			let cancelled = false;
+			let crashed = false;
+			const showProgress = (): void => {
+				notice.setMessage(`Rendering diagrams for mobile… ${finished}/${todo.length}`);
+			};
+
+			const renderOne = async (key: string, tidied: string): Promise<void> => {
 				const settings = this.getSettings();
 				const localKey = this.localKey(tidied);
 				const cachedSvg = await this.desktop.cache.get(localKey);
@@ -194,8 +202,38 @@ export class SharedSync {
 				} else if (!svg) {
 					failed++;
 				}
-			}
-			return { rendered, failed, cancelled: false };
+			};
+
+			// As many workers as compiles may run at once (`startCompile`'s
+			// limiter would queue any more anyway). Each takes the next diagram
+			// only after checking for a cancel, so stopping takes effect within
+			// one compile per worker rather than after the whole queue.
+			const worker = async (): Promise<void> => {
+				while (next < todo.length && !crashed) {
+					if (!this.isActive()) {
+						cancelled = true;
+						return;
+					}
+					const [key, tidied] = todo[next++];
+					try {
+						await renderOne(key, tidied);
+					} catch (error) {
+						crashed = true;
+						throw error;
+					}
+					finished++;
+					showProgress();
+				}
+			};
+
+			showProgress();
+			const workers = resolveConcurrency(this.getSettings().maxConcurrentCompiles, this.desktop.cpuCount());
+			const outcomes = await Promise.allSettled(
+				Array.from({ length: Math.min(workers, Math.max(1, todo.length)) }, worker),
+			);
+			const crash = outcomes.find((outcome) => outcome.status === "rejected");
+			if (crash) throw crash.reason;
+			return { rendered, failed, cancelled };
 		} finally {
 			notice.hide();
 		}

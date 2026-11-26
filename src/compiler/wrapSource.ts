@@ -35,13 +35,8 @@ export const LEGACY_DEFAULT_PREAMBLE = [
 	"\\usepackage{array}",
 ].join("\n");
 
-/**
- * Convenience packages seeded into the default preamble. This is a *default*,
- * not a restriction: any package installed in the user's TeX distribution can
- * be loaded with an in-block `\usepackage{...}`. The list mirrors what the
- * upstream TikZJax plugin hardcoded, so existing notes keep working.
- */
-export const DEFAULT_PREAMBLE = [
+/** The default preamble of 1.0–1.2, migrated to {@link DEFAULT_PREAMBLE}. */
+export const V1_DEFAULT_PREAMBLE = [
 	"\\usepackage{tikz}",
 	"\\usepackage{tikz-cd}",
 	"\\usepackage{circuitikz}",
@@ -55,6 +50,111 @@ export const DEFAULT_PREAMBLE = [
 	"\\usepackage{array}",
 ].join("\n");
 
+/**
+ * TikZ libraries every wrapped block gets. Two groups:
+ *
+ * - the everyday ones a 593-diagram vault audit found missing most often
+ *   (`diamond`, `-{Stealth}`, `fit=…`, …): arrows.meta, calc,
+ *   shapes.geometric, decorations.pathreplacing, decorations.markings,
+ *   backgrounds, fit, matrix;
+ * - the ones the 1.0–1.2 preamble loaded *implicitly* through tikz-cd,
+ *   circuitikz and pgfplots (found by diffing the files each preamble reads):
+ *   arrows (`-latex'`), plotmarks (`mark=square*`), decorations.pathmorphing
+ *   (`snake`), 3d (`canvas is xy plane`), quotes and bending. Keeping them
+ *   means a diagram that relied on one of them without saying so renders
+ *   exactly as before now that those packages load only on demand. bending
+ *   in particular changes how arrow tips sit on curves, so dropping it would
+ *   have changed existing output silently.
+ *
+ * Libraries are cheap (tens of milliseconds); the packages are not.
+ *
+ * `positioning` is deliberately **not** here, although its absence caused 16
+ * of those failures: it redefines `above right=<distance>` and friends even
+ * without `of`, which moved labels in 65 of the 593 diagrams (every one that
+ * used a diagonal placement with a distance and no positioning of its own).
+ * A block that needs `right=of a` gets a hint naming the library instead.
+ */
+export const DEFAULT_TIKZ_LIBRARIES = [
+	"arrows.meta", "calc", "shapes.geometric", "decorations.pathreplacing",
+	"decorations.markings", "backgrounds", "fit", "matrix",
+	"arrows", "plotmarks", "decorations.pathmorphing", "3d", "quotes", "bending",
+];
+
+/**
+ * Convenience packages seeded into the default preamble. This is a *default*,
+ * not a restriction: any package installed in the user's TeX distribution can
+ * be loaded with an in-block `\usepackage{...}`. The heavy packages upstream
+ * TikZJax hardcoded (pgfplots, tikz-cd, circuitikz, chemfig, tikz-3dplot) are
+ * {@link ON_DEMAND_PACKAGES} instead, so existing notes keep working. `ifthen`
+ * came with them before and is kept for `\ifthenelse`.
+ */
+export const DEFAULT_PREAMBLE = [
+	"\\usepackage{tikz}",
+	`\\usetikzlibrary{${DEFAULT_TIKZ_LIBRARIES.join(", ")}}`,
+	"\\usepackage{amsmath}",
+	"\\usepackage{amssymb}",
+	"\\usepackage{amsfonts}",
+	"\\usepackage{array}",
+	"\\usepackage{ifthen}",
+].join("\n");
+
+export interface OnDemandPackage {
+	/** Package name, as in `\\usepackage{<name>}`. */
+	name: string;
+	/** Preamble lines that load it. */
+	lines: string[];
+	/** Matches (comment-masked) block source that uses it. */
+	usedBy: RegExp;
+}
+
+/**
+ * The heavy packages, loaded only for blocks that use them: together they
+ * made every compile about a third slower (1,018 ms against 686 ms for a
+ * plain picture in the audit). Detection does not have to be perfect: a block
+ * that fails without them is compiled once more with all of them (see
+ * `compileTikz`), so a miss costs time, never a diagram. circuitikz, for one,
+ * is often used only through `to[R]` inside a plain `tikzpicture`.
+ */
+export const ON_DEMAND_PACKAGES: readonly OnDemandPackage[] = [
+	{
+		name: "tikz-cd",
+		lines: ["\\usepackage{tikz-cd}"],
+		usedBy: /\btikzcd\b/,
+	},
+	{
+		name: "circuitikz",
+		lines: ["\\usepackage{circuitikz}"],
+		usedBy: /circuitikz|\\ctikzset\b|\bto\s*\[\s*(?:short|open|R|C|L|V|I|D|battery1?|lamp|vR|cV|cI|sV|sI|american|european|ammeter|voltmeter|generic|switch|spst|nos|ncs|led|Do|Zo|fuse|resistor|capacitor|inductor|vsource|isource)\b/,
+	},
+	{
+		name: "pgfplots",
+		lines: ["\\usepackage{pgfplots}", "\\pgfplotsset{compat=1.18}"],
+		usedBy:
+			/\\begin\s*\{\s*(?:axis|semilogxaxis|semilogyaxis|loglogaxis|polaraxis|groupplot|ternaryaxis|smithchart)\s*\}|\\(?:addplot|addlegendentry|legend|pgfplots\w*|usepgfplotslibrary|nextgroupplot)\b/,
+	},
+	{
+		name: "chemfig",
+		lines: ["\\usepackage{chemfig}"],
+		usedBy: /\\(?:chemfig|chemname|setchemfig|schemestart|schemestop|chemabove|chembelow|chemmove|lewis|Lewis|chemsign|chemrel|setatomsep|setbondoffset)\b/,
+	},
+	{
+		name: "tikz-3dplot",
+		lines: ["\\usepackage{tikz-3dplot}"],
+		usedBy: /\\tdplot\w*/,
+	},
+];
+
+/**
+ * How {@link ON_DEMAND_PACKAGES} are loaded: only for blocks that use them,
+ * for every block (the 1.0–1.2 behaviour), or never (the preamble alone).
+ */
+export type PackageLoading = "on-demand" | "all" | "none";
+
+/** True when `text` loads package `name` (possibly among others, with options). */
+function loadsPackage(text: string, name: string): boolean {
+	return new RegExp(`\\\\(?:usepackage|RequirePackage)\\s*(?:\\[[^\\]]*\\])?\\s*\\{[^}]*\\b${name.replace(/[-]/g, "\\-")}\\b[^}]*\\}`).test(text);
+}
+
 export type SourceTier = 1 | 2 | 3;
 
 const BEGIN_DOCUMENT = /\\begin\s*\{\s*document\s*\}/;
@@ -66,6 +166,8 @@ export interface WrapOptions {
 	preamble: string;
 	/** Emit {@link PGF_DRIVER_LINE} ahead of pgf/tikz. False for `pdflatex`. */
 	injectDvisvgmDriver: boolean;
+	/** Which {@link ON_DEMAND_PACKAGES} to add after the preamble. Default `"none"`. */
+	packages?: PackageLoading;
 }
 
 export interface WrappedSource {
@@ -77,6 +179,14 @@ export interface WrappedSource {
 	tidiedSource: string;
 	/** Packages hoisted out of a tier-3 block into the preamble. */
 	hoisted: string[];
+	/** On-demand packages added for this block. */
+	loaded: string[];
+	/**
+	 * On-demand packages left out because the block did not seem to use them
+	 * (only with `"on-demand"`). A failed compile with any is worth a retry
+	 * with `"all"`.
+	 */
+	skipped: string[];
 }
 
 /**
@@ -148,7 +258,57 @@ function maskComments(source: string): string {
 }
 
 const PACKAGE_LOADERS = /^\\(usepackage|RequirePackage)\b/;
+/** Lines that must be in the preamble; all but the package loaders need the default packages first. */
 const PREAMBLE_ONLY = /^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotslibrary)\b/;
+/** Hoisted out of a bare (tier 3) snippet only; a tier 2 head is preamble already. */
+const DECLARATIONS = /^\\DeclareMathOperator\b/;
+
+/** A multi-line preamble command never spans more than this many lines. */
+const MAX_CONTINUATION_LINES = 20;
+
+/**
+ * Net `{`/`[` nesting a line opens, ignoring comments and escaped `\{`. Used
+ * to keep `\usetikzlibrary{arrows.meta,\n positioning}` together: hoisting
+ * only its first line left `positioning}` in the document body.
+ */
+function openGroups(line: string): number {
+	const code = maskComments(line).replace(/\\./g, "");
+	let depth = 0;
+	for (const char of code) {
+		if (char === "{" || char === "[") depth++;
+		else if (char === "}" || char === "]") depth--;
+	}
+	return depth;
+}
+
+/**
+ * Splits the block into commands, so that a preamble command written over
+ * several lines is one entry. A command whose groups never close within
+ * {@link MAX_CONTINUATION_LINES} is left as single lines, exactly as before.
+ */
+function preambleUnits(lines: string[], isPreambleLine: (line: string) => boolean): string[] {
+	const units: string[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (!isPreambleLine(line)) {
+			units.push(line);
+			continue;
+		}
+		let depth = openGroups(line);
+		let end = i;
+		while (depth > 0 && end + 1 < lines.length && end - i < MAX_CONTINUATION_LINES) {
+			end++;
+			depth += openGroups(lines[end]);
+		}
+		if (depth === 0 && end > i) {
+			units.push(lines.slice(i, end + 1).join("\n"));
+			i = end;
+		} else {
+			units.push(line);
+		}
+	}
+	return units;
+}
 
 /**
  * Splits the block's own preamble-level lines into those that must come
@@ -159,15 +319,23 @@ const PREAMBLE_ONLY = /^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotsl
  * LaTeX aborts with "Option clash for package xcolor" — and dvipsnames is
  * extremely common in TikZ snippets. Conversely `\usetikzlibrary` and
  * `\usepgfplotslibrary` need tikz/pgfplots to be loaded already, so they have
- * to follow the default preamble.
+ * to follow the default preamble. So does `\DeclareMathOperator` from a bare
+ * snippet ("Can be used only in preamble"; it needs amsmath).
+ *
+ * A command written over several lines moves as a whole ({@link preambleUnits}).
  */
-function splitPreambleLines(lines: string[]): { early: string[]; late: string[]; rest: string[] } {
+function splitPreambleLines(
+	lines: string[],
+	hoistDeclarations: boolean,
+): { early: string[]; late: string[]; rest: string[] } {
 	const early: string[] = [];
 	const late: string[] = [];
 	const rest: string[] = [];
-	for (const line of lines) {
+	const isLate = (line: string): boolean =>
+		PREAMBLE_ONLY.test(line) || (hoistDeclarations && DECLARATIONS.test(line));
+	for (const line of preambleUnits(lines, isLate)) {
 		if (PACKAGE_LOADERS.test(line)) early.push(line);
-		else if (PREAMBLE_ONLY.test(line)) late.push(line);
+		else if (isLate(line)) late.push(line);
 		else rest.push(line);
 	}
 	return { early, late, rest };
@@ -185,7 +353,26 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		// legal LaTeX and is the only way to get the driver in ahead of the
 		// user's own `\usepackage{tikz}`.
 		const tex = driverLine ? `${driverLine}\n${tidiedSource}` : tidiedSource;
-		return { tex, tier, tidiedSource, hoisted: [] };
+		return { tex, tier, tidiedSource, hoisted: [], loaded: [], skipped: [] };
+	}
+
+	// Heavy packages, after the user's preamble (whose own copy, with options,
+	// then wins) and before the block's libraries, which may need them.
+	const mode = options.packages ?? "none";
+	const code = maskComments(tidiedSource);
+	const loaded: string[] = [];
+	const skipped: string[] = [];
+	const packageLines: string[] = [];
+	for (const pkg of ON_DEMAND_PACKAGES) {
+		// Already loaded by the preamble or the block itself (whose own
+		// options and settings, such as a different pgfplots compat, win).
+		if (mode === "none" || loadsPackage(preamble, pkg.name) || loadsPackage(code, pkg.name)) continue;
+		if (mode === "all" || pkg.usedBy.test(code)) {
+			loaded.push(pkg.name);
+			packageLines.push(...pkg.lines);
+		} else {
+			skipped.push(pkg.name);
+		}
 	}
 
 	const withContent = (parts: string[]): string => parts.filter((part) => part.length > 0).join("\n");
@@ -196,32 +383,34 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		const index = match?.index ?? 0;
 		const head = tidiedSource.slice(0, index);
 		const document = tidiedSource.slice(index);
-		const { early, late, rest } = splitPreambleLines(head.split("\n"));
+		const { early, late, rest } = splitPreambleLines(head.split("\n"), false);
 		const tex = withContent([
 			STANDALONE_CLASS,
 			driverLine,
 			...early,
 			preamble,
+			...packageLines,
 			...late,
 			...rest,
 			document,
 		]);
-		return { tex, tier, tidiedSource, hoisted: [] };
+		return { tex, tier, tidiedSource, hoisted: [], loaded, skipped };
 	}
 
 	// Tier 3: `\usepackage` and friends are preamble-only, so lift them out of
 	// what will become the document body.
-	const { early, late, rest } = splitPreambleLines(tidiedSource.split("\n"));
+	const { early, late, rest } = splitPreambleLines(tidiedSource.split("\n"), true);
 	const tex = withContent([
 		STANDALONE_CLASS,
 		driverLine,
 		...early,
 		preamble,
+		...packageLines,
 		...late,
 		"\\begin{document}",
 		rest.join("\n"),
 		"\\end{document}",
 	]);
 
-	return { tex, tier, tidiedSource, hoisted: [...early, ...late] };
+	return { tex, tier, tidiedSource, hoisted: [...early, ...late], loaded, skipped };
 }

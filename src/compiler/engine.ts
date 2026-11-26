@@ -23,7 +23,7 @@ import {
 	scratchRoot,
 	type ResolvedBinary,
 } from "./pathResolve";
-import { normalizePreamble, wrapTikzSource } from "./wrapSource";
+import { normalizePreamble, wrapTikzSource, type PackageLoading, type WrappedSource } from "./wrapSource";
 
 import {
 	DEFAULT_TIMEOUT_SECONDS,
@@ -208,6 +208,82 @@ export function extractErrorSummary(log: string): string | null {
 	return `! ${message}`;
 }
 
+/**
+ * dvisvgm reports problems as indented `ERROR: …` / `XML error: …` lines
+ * rather than TeX's `! …`, e.g. "XML error: missing closing tag(s): </g>".
+ */
+export function extractDvisvgmError(output: string): string | null {
+	const line = output.split("\n").find((candidate) => /\berror\b/i.test(candidate));
+	return line ? `dvisvgm: ${line.trim()}` : null;
+}
+
+/**
+ * TikZ keys that only exist once a library is loaded, as pgfkeys names them in
+ * "I do not know the key '/tikz/<key>'". Matched on the key's start, so
+ * `regular polygon sides` is covered by `regular polygon`.
+ */
+const KEY_LIBRARIES: readonly (readonly [string, string])[] = [
+	...[
+		"diamond", "ellipse", "trapezium", "semicircle", "regular polygon", "star",
+		"isosceles triangle", "kite", "dart", "circular sector", "cylinder",
+	].map((key) => [key, "shapes.geometric"] as const),
+	...["rectangle split", "circle split", "circle solidus", "ellipse split"].map(
+		(key) => [key, "shapes.multipart"] as const,
+	),
+	...["cross out", "strike out", "rounded rectangle", "chamfered rectangle"].map(
+		(key) => [key, "shapes.misc"] as const,
+	),
+	...["single arrow", "double arrow"].map((key) => [key, "shapes.arrows"] as const),
+	["fit", "fit"],
+	...["on background layer", "show background", "background rectangle", "framed"].map(
+		(key) => [key, "backgrounds"] as const,
+	),
+	...["matrix of nodes", "matrix of math nodes"].map((key) => [key, "matrix"] as const),
+	["circle through", "through"],
+	...["name path", "name intersections"].map((key) => [key, "intersections"] as const),
+	...["pics/angle", "pics/right angle"].map((key) => [key, "angles"] as const),
+	...["state", "initial", "accepting"].map((key) => [key, "automata"] as const),
+	...["decoration", "decorate"].map(
+		(key) => [key, "decorations.markings (or decorations.pathreplacing / decorations.pathmorphing)"] as const,
+	),
+];
+
+function libraryForKey(key: string): string | undefined {
+	return KEY_LIBRARIES.find(([prefix]) => key === prefix || key.startsWith(`${prefix} `))?.[1];
+}
+
+/** Arrow tips that need `arrows.meta` (the lower-case `latex`/`stealth` are built in). */
+/** TeX's log line width (`max_print_line`): it breaks longer lines here, mid-word. */
+const TEX_LOG_WIDTH = 79;
+
+/**
+ * Rejoins the lines TeX hard-wrapped, without inserting a space, so a key
+ * name split as `'/tikz/regular pol` + `ygon'` reads back whole.
+ */
+export function unwrapTexLog(log: string): string {
+	return log
+		.split("\n")
+		.map((line) => (line.length >= TEX_LOG_WIDTH ? line : `${line}\n`))
+		.join("");
+}
+
+/**
+ * Pages TeX wrote, from its "Output written on diagram.dvi (2 pages, …)" line
+ * (the same wording for .dvi, .xdv and .pdf). Null when the log has none.
+ */
+export function countOutputPages(log: string): number | null {
+	const match = /Output written on \S+ \((\d+) pages?\b/.exec(log.replace(/\s*\n\s*/g, " "));
+	return match ? Number(match[1]) : null;
+}
+
+const ARROWS_META_TIPS = new Set([
+	"Stealth", "Latex", "Triangle", "Kite", "Square", "Circle", "Rectangle", "Ellipse",
+	"Diamond", "Turned Square", "Arc Barb", "Bar", "Bracket", "Butt Cap", "Fast Round",
+	"Fast Triangle", "Hooks", "Implies", "Parenthesis", "Rays", "Round Cap",
+	"Straight Barb", "Tee Barb", "Triangle Cap", "To",
+	"Classical TikZ Rightarrow", "Computer Modern Rightarrow",
+]);
+
 /** Turns a compiler log into an actionable hint, when we recognise the case. */
 export function deriveHint(log: string, engine: EngineId): string | undefined {
 	// TeX wraps log lines at ~79 columns, so a phrase like "not found" can be
@@ -253,6 +329,43 @@ export function deriveHint(log: string, engine: EngineId): string | undefined {
 
 	if (/^!\s*Missing \\begin\{document\}/m.test(log)) {
 		return "The block looks incomplete. Add \\begin{document} ... \\end{document}, or write bare TikZ commands and let the plugin wrap them.";
+	}
+
+	// Obsidian's MathJax defines `\lt`/`\gt` and the vault conventions require
+	// them in note math, so they leak into tikz blocks, which are real LaTeX.
+	// TeX's context line ends right at the undefined control sequence.
+	if (/Undefined control sequence/.test(flat) && /^l\.\d+ .*\\[lg]t\s*$/m.test(log)) {
+		return "`\\lt` and `\\gt` exist only in Obsidian's math renderer (MathJax). A tikz block is real LaTeX: write `<` and `>` instead.";
+	}
+
+	// `right=of a` / `below=1cm of a` without the library: TikZ's own
+	// `right=<shift>` key hands "of a" to the maths parser.
+	if (/Unknown (?:function|operator) .{0,16}`of'/.test(flat)) {
+		return "`right=of …` / `below=1cm of …` needs the positioning library: add `\\usetikzlibrary{positioning}` to the block.";
+	}
+
+	const unwrapped = unwrapTexLog(log);
+	const unknownKey = /I do not know the key '\/tikz\/([^']+)'/.exec(unwrapped)?.[1];
+	if (unknownKey) {
+		const library = libraryForKey(unknownKey);
+		if (library) {
+			return `The TikZ key "${unknownKey}" comes from a library: add \`\\usetikzlibrary{${library}}\` to the block.`;
+		}
+	}
+
+	const arrowTip = /Unknown arrow tip kind '([^']+)'/.exec(unwrapped)?.[1];
+	if (arrowTip && ARROWS_META_TIPS.has(arrowTip)) {
+		return `The arrow tip "${arrowTip}" comes from arrows.meta: add \`\\usetikzlibrary{arrows.meta}\` to the block.`;
+	}
+
+	if (/You need to load a decoration library/.test(flat)) {
+		return "Load the decoration library for it: `brace` is in decorations.pathreplacing, `snake`/`zigzag`/`coil` in decorations.pathmorphing, `markings` in decorations.markings.";
+	}
+
+	// dvisvgm rejects the SVG it would write when a `\color` inside `font=`
+	// opens a colour group in one place and closes it in another.
+	if (/missing closing tag\(s\): <\/g>/.test(flat)) {
+		return "This usually means a `\\color{…}` inside a TikZ `font=…` option, which dvisvgm cannot nest correctly. Use `text=<colour>` on the node instead.";
 	}
 
 	if (/Portal call failed/i.test(flat) || /org\.freedesktop\.portal/i.test(flat)) {
@@ -354,12 +467,17 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
 	const workDir = options.workDir ?? createWorkDir();
 
-	const wrapped = wrapTikzSource({
-		source: options.source,
-		preamble: normalizePreamble(options.preamble),
-		injectDvisvgmDriver: spec.injectDvisvgmDriver,
-	});
-	const tex = wrapped.tex;
+	const wrap = (packages: PackageLoading): WrappedSource =>
+		wrapTikzSource({
+			source: options.source,
+			preamble: normalizePreamble(options.preamble),
+			injectDvisvgmDriver: spec.injectDvisvgmDriver,
+			packages,
+		});
+	let wrapped = wrap(options.packages ?? "on-demand");
+	// `let`: a retry with every package replaces it, and failures report
+	// the document that was actually compiled last.
+	let tex = wrapped.tex;
 
 	const fail = (
 		kind: CompileFailureKind,
@@ -435,15 +553,6 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 
 	// ---- stage 1: tex → dvi/xdv/pdf ---------------------------------------
 	const texFile = `${jobName}.tex`;
-	try {
-		await fsp.writeFile(path.join(workDir, texFile), tex, "utf8");
-	} catch (error) {
-		return fail(
-			"io-error",
-			`Could not write ${texFile}`,
-			error instanceof Error ? error.message : String(error),
-		);
-	}
 
 	const engineArgs = [
 		"-interaction=nonstopmode",
@@ -455,18 +564,41 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		texFile,
 	];
 
-	const engineRun = await runProcess(engineBin, engineArgs, {
-		cwd: workDir,
-		env,
-		timeoutMs,
-		viaHost: engineResolved.viaHost,
-		extraDirs: options.extraPathDirs,
-	});
-	const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
-	const engineLog = joinLog([
-		engineRun.stderr,
-		engineLogFile ?? engineRun.stdout,
-	]);
+	let engineRun: ProcessResult;
+	let engineLog: string;
+	for (;;) {
+		try {
+			await fsp.writeFile(path.join(workDir, texFile), tex, "utf8");
+		} catch (error) {
+			return fail(
+				"io-error",
+				`Could not write ${texFile}`,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+		engineRun = await runProcess(engineBin, engineArgs, {
+			cwd: workDir,
+			env,
+			timeoutMs,
+			viaHost: engineResolved.viaHost,
+			extraDirs: options.extraPathDirs,
+		});
+		const engineLogFile = await readIfExists(path.join(workDir, `${jobName}.log`));
+		engineLog = joinLog([engineRun.stderr, engineLogFile ?? engineRun.stdout]);
+
+		// Heavy packages are loaded only when a block seems to use them. If it
+		// failed without some of them, compile once more with all of them (the
+		// 1.0–1.2 preamble), so a missed detection costs time, never a
+		// diagram. Not after a timeout (that would double the wait) or a
+		// spawn failure (nothing to do with packages).
+		const failed = engineRun.code !== 0 || /^!\s?/m.test(engineLog);
+		if (failed && !engineRun.timedOut && !engineRun.spawnError && wrapped.skipped.length > 0) {
+			wrapped = wrap("all");
+			tex = wrapped.tex;
+			continue;
+		}
+		break;
+	}
 
 	if (engineRun.timedOut) {
 		return fail(
@@ -500,6 +632,18 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 			`The TeX engine reported success but produced no .${spec.artifactExt} file.`,
 			engineLog,
 			"This usually means the document produced no pages. Check that the block draws something.",
+		);
+	}
+
+	// dvisvgm converts only the first page and exits 0, so without this a
+	// second picture would vanish without a word.
+	const pages = countOutputPages(engineLog);
+	if (pages !== null && pages > 1) {
+		return fail(
+			"multi-page",
+			`The block produced ${pages} pages, but a diagram can only show one.`,
+			engineLog,
+			"Each `tikzpicture` in a `\\documentclass[tikz]{standalone}` (or `[multi]`) document becomes its own page. Put each picture in its own ```tikz block, or combine them in one `tikzpicture` (e.g. with `shift` on a `scope`).",
 		);
 	}
 
@@ -545,6 +689,7 @@ async function compileTikzUnsafe(options: CompileOptions, started: number): Prom
 		return fail(
 			"dvisvgm-error",
 			extractErrorSummary(svgRun.stderr + svgRun.stdout) ??
+				extractDvisvgmError(svgRun.stderr + svgRun.stdout) ??
 				`dvisvgm exited with code ${svgRun.code}.`,
 			svgLog,
 			deriveHint(svgLog, options.engine),

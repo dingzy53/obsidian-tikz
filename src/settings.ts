@@ -190,6 +190,19 @@ export class TikzSettingTab extends PluginSettingTab {
 			cls: "tikz-preamble-group",
 			items: [
 				{
+					name: "Heavy packages",
+					desc: "pgfplots, tikz-cd, circuitikz, chemfig and tikz-3dplot. Loading them only for diagrams that use them makes every other diagram compile about a third faster; a diagram that fails without them is compiled again with all of them.",
+					aliases: ["pgfplots", "tikz-cd", "circuitikz", "chemfig", "tikz-3dplot", "on demand"],
+					control: {
+						type: "dropdown",
+						key: "heavyPackages",
+						options: {
+							"on-demand": "When a diagram uses them (recommended)",
+							all: "Always",
+						},
+					},
+				},
+				{
 					name: "Preamble",
 					desc: "Loaded for blocks without a custom \\documentclass.",
 					aliases: ["packages", "usepackage", "restore", "default preamble"],

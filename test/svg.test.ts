@@ -13,7 +13,19 @@ import {
 	sanitizeSvg,
 	SvgRejectedError,
 	toHex,
+	FLATTEN_DEPTH_THRESHOLD,
+	flattenPresentationGroups,
+	maxGroupDepth,
 } from "../src/svg";
+import type { XastChild, XastElement, XastRoot } from "svgo/lib/types";
+
+function element(name: string, attributes: Record<string, string>, ...children: XastChild[]): XastElement {
+	return { type: "element", name, attributes, children };
+}
+const group = (attributes: Record<string, string>, ...children: XastChild[]): XastElement =>
+	element("g", attributes, ...children);
+const leaf = (attributes: Record<string, string>): XastElement => element("path", { ...attributes });
+const tree = (...children: XastChild[]): XastRoot => ({ type: "root", children });
 
 /**
  * Trimmed but structurally faithful dvisvgm 3.6 output: single-quoted
@@ -105,10 +117,44 @@ describe("adaptForDarkPage", () => {
 	it("leaves deliberately subtle colours subtle", () => {
 		// A near-white box is 1.14:1 against white — a barely-there panel. The
 		// floor must not apply to it, or it would become a grey slab.
-		expect(toHex(adaptForDarkPage(parseHexColor("#f0f0f0")!))).toBe("#0f0f0f");
+		expect(toHex(adaptForDarkPage(parseHexColor("#f0f0f0")!))).toBe("#2b2b2b");
 		expect(crOnDark("#f0f0f0")).toBeLessThan(1.5);
-		expect(toHex(adaptForDarkPage(parseHexColor("#c0c0c0")!))).toBe("#3f3f3f");
-		expect(crOnDark("#c0c0c0")).toBeLessThan(2);
+		expect(toHex(adaptForDarkPage(parseHexColor("#c0c0c0")!))).toBe("#565656");
+		expect(crOnDark("#c0c0c0")).toBeLessThan(3);
+	});
+
+	it("puts tints of white just above the dark page, never below it", () => {
+		// The plain mirror sent these *below* #1e1e1e (blue!12 -> #00001f), so
+		// a pale card read as a hole and a white mask as a black sticker.
+		const page = relativeLuminance({ r: 30, g: 30, b: 30 });
+		const tints = ["#f0f0f0", "#cccccc", "#e0e0ff", "#b3b3ff", "#f8f8ff", "#ffffc0", "#ffe6e6", "#e6ffe6", "#ffe6cc"];
+		for (const hex of tints) {
+			const out = adaptForDarkPage(parseHexColor(hex)!);
+			expect(relativeLuminance(out)).toBeGreaterThan(page);
+			expect(crOnDark(hex)).toBeLessThan(3);
+		}
+		expect(toHex(adaptForDarkPage(parseHexColor("#e0e0ff")!))).toBe("#242439"); // blue!12
+		expect(toHex(adaptForDarkPage(parseHexColor("#ffe6e6")!))).toBe("#341b1b"); // red!10
+	});
+
+	it("rebuilds a tint from the same ink, so the hue survives at low saturation", () => {
+		// The rejected alternatives turned ghost-white into navy (#000084) and
+		// pale yellow into an olive slab; a tint must stay a tint.
+		const tint = rgbToHsl(adaptForDarkPage(parseHexColor("#f8f8ff")!));
+		expect(tint.h).toBeCloseTo(2 / 3, 2);
+		expect(crOnDark("#f8f8ff")).toBeLessThan(1.1);
+		expect(crOnDark("#ffffc0")).toBeLessThan(2.5);
+	});
+
+	it("sends pure white exactly to the page colour", () => {
+		expect(toHex(adaptForDarkPage(parseHexColor("#ffffff")!))).toBe("#1e1e1e");
+	});
+
+	it("keeps colours with no white in them exactly as the mirror had them", () => {
+		// Pure green/yellow/cyan are subtle on white but bright ink on a dark page.
+		for (const hex of ["#00ff00", "#ffff00", "#00ffff", "#ffcc00"]) {
+			expect(toHex(adaptForDarkPage(parseHexColor(hex)!))).toBe(toHex(mirrorLightness(parseHexColor(hex)!)));
+		}
 	});
 
 	it("preserves hue for every colour it touches", () => {
@@ -137,13 +183,14 @@ describe("adaptColorsForDarkMode", () => {
 		expect(out).toContain(`stroke='currentColor'`);
 	});
 
-	it("mirrors white instead of turning it into the page background", () => {
-		// The old rule was `white -> var(--background-primary)`. That is right
-		// for a background but wrong for white *ink*: white text on a coloured
-		// box became the dark page colour and vanished. Mirroring to black
-		// keeps it consistent with the box, which mirrors to a light colour.
+	it("puts white on the page colour, as a literal rather than a CSS variable", () => {
+		// White masks and cutouts must blend into the page. Upstream's
+		// `white -> var(--background-primary)` did that only for exact white
+		// and broke when the boxes around white text were not adapted; here
+		// every colour is adapted, white text sits on a lightened box, and the
+		// value stays a plain hex colour SVGO and the sanitiser understand.
 		const out = adaptColorsForDarkMode(`<path fill='#ffffff'/>`);
-		expect(out).toBe(`<path fill='#000000'/>`);
+		expect(out).toBe(`<path fill='#1e1e1e'/>`);
 		expect(out).not.toContain("var(--background-primary)");
 	});
 
@@ -154,13 +201,13 @@ describe("adaptColorsForDarkMode", () => {
 		);
 		expect(out).toContain(`fill='#ff4c4c'`); // dark red ink -> light red
 		expect(out).toContain(`fill='#7f7f7f'`); // mid grey is already fine
-		expect(out).toContain(`fill='#0f0f0f'`); // near-white box -> near-black
-		expect(out).toContain(`fill='#3f3f00'`); // pale yellow box -> dark olive
+		expect(out).toContain(`fill='#2b2b2b'`); // near-white box -> just above the page
+		expect(out).toContain(`fill='#565617'`); // pale yellow box -> dark yellow tint
 	});
 
 	it("handles colours written as style declarations, not just attributes", () => {
 		const out = adaptColorsForDarkMode(`<path style='fill:#f0f0f0;stroke:none'/>`);
-		expect(out).toBe(`<path style='fill:#0f0f0f;stroke:none'/>`);
+		expect(out).toBe(`<path style='fill:#2b2b2b;stroke:none'/>`);
 	});
 
 	it("handles gradient stops, including dvisvgm's inner whitespace", () => {
@@ -169,10 +216,10 @@ describe("adaptColorsForDarkMode", () => {
 		// silently skips every `<stop>`, leaving ball shadings, colormaps and
 		// fadings untranslated — which is exactly what happened first time.
 		expect(adaptColorsForDarkMode(`<stop stop-color='#ffffc0'/>`)).toBe(
-			`<stop stop-color='#3f3f00'/>`,
+			`<stop stop-color='#565617'/>`,
 		);
 		expect(adaptColorsForDarkMode(`<stop stop-color=' #f8f8ff '/>`)).toBe(
-			`<stop stop-color=' #000007 '/>`,
+			`<stop stop-color=' #1f1f24 '/>`,
 		);
 		expect(adaptColorsForDarkMode(`<stop stop-color=' #000 '/>`)).toBe(
 			`<stop stop-color=' currentColor '/>`,
@@ -302,10 +349,8 @@ describe("optimizeSVG", () => {
 		const out = optimizeSVG(adaptColorsForDarkMode(DVISVGM_SVG), "p-");
 		expect(out).not.toContain("generated by dvisvgm");
 		expect(out).toContain("currentColor");
-		// The white fill was mirrored to black and survived; note SVGO's
-		// convertColors shortens `#000000` to `#000`, so assert on the
-		// meaning (a black fill) rather than the literal spelling.
-		expect(out).toMatch(/fill="#000"/);
+		// The white fill was moved onto the dark page colour and survived.
+		expect(out).toMatch(/fill="#1e1e1e"/);
 		expect(out).not.toMatch(/#fff/i);
 	});
 
@@ -408,5 +453,111 @@ describe("prepareSvgForDisplay", () => {
 		expect(out).toMatch(/viewBox="-43\.4 -44\.3 33\.4 8\.2"/);
 		expect(out).toMatch(/width="[\d.]+(pt)?"/);
 		expect(out).toMatch(/height="[\d.]+(pt)?"/);
+	});
+});
+
+/** Deepest `<g>` nesting in serialised SVG. */
+function groupDepth(svg: string): number {
+	let depth = 0;
+	let max = 0;
+	for (const match of svg.matchAll(/<(\/?)g\b[^>]*?(\/?)>/g)) {
+		if (match[1]) depth--;
+		else if (!match[2]) max = Math.max(max, ++depth);
+	}
+	return max;
+}
+
+/**
+ * The shape pgfplots `surf` produces through pgfsys-dvisvgm.def: per facet,
+ * colour and opacity groups that are never closed, each holding the facet
+ * *and* the next facet's groups, so SVGO's collapseGroups cannot touch them.
+ */
+function surfChain(facets: number): string {
+	let open = "";
+	for (let i = 0; i < facets; i++) {
+		const hex = (i % 256).toString(16).padStart(2, "0");
+		open +=
+			`<g fill='#0000${hex}' stroke='#0000${hex}'><g stroke-opacity='0.9'><g fill-opacity='0.9'>` +
+			`<g stroke='#0000cc'><path d='M${i} 0L${i + 1} 0L${i} 1Z'/>`;
+	}
+	return (
+		`<svg version='1.1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 100 100'>` +
+		`<g clip-path='url(#c)'>${open}${"</g>".repeat(facets * 4)}</g>` +
+		`<clipPath id='c'><path d='M0 0H100V100Z'/></clipPath></svg>`
+	);
+}
+
+describe("flattening runaway group nesting", () => {
+	it("brings a 3,000-deep surf chain down to a few levels, quickly", () => {
+		const deep = surfChain(750);
+		expect(groupDepth(deep)).toBe(3001);
+		const started = Date.now();
+		const out = optimizeSVG(deep, "p-");
+		expect(Date.now() - started).toBeLessThan(3000);
+		expect(groupDepth(out)).toBeLessThanOrEqual(3);
+		expect(out.match(/<path\b/g)?.length).toBe(751); // 750 facets + the clip path
+	});
+
+	it("keeps paint order and hands each facet exactly its inherited paint", () => {
+		const out = optimizeSVG(surfChain(40), "p-");
+		// SVGO hoists what every facet shares onto the clip group: the inner
+		// group's stroke (which wins over the outer one, as inheritance would
+		// have it) and both opacities.
+		expect(out).toMatch(/<g fill-opacity="\.9" stroke="#00c" stroke-opacity="\.9" clip-path="url\(#p-c\)">/);
+		const facets = [...out.matchAll(/<path\b[^>]*>/g)].map((match) => match[0]).slice(0, 40);
+		for (const [i, tag] of facets.entries()) {
+			expect(tag).toContain(`d="M${i} 0`);
+			// Facet 0's `#000000` is SVG's default fill, which SVGO drops.
+			// (SVGO also shortens `#000011` to `#001`, hence the parse.)
+			if (i > 0) expect(parseHexColor(/fill="(#[0-9a-f]+)"/.exec(tag)?.[1] ?? "")).toEqual({ r: 0, g: 0, b: i });
+		}
+	});
+
+	it("never dissolves a group whose meaning is not just inherited paint", () => {
+		// opacity and clip-path composite the group as a whole; transform, id,
+		// class and style change geometry, references or the cascade.
+		const keepers: Record<string, string>[] = [
+			{ opacity: "0.5" }, { "clip-path": "url(#c)" }, { mask: "url(#m)" }, { filter: "url(#f)" },
+			{ transform: "translate(1 1)" }, { id: "keep" }, { class: "x" }, { style: "fill:red" },
+		];
+		for (const attributes of keepers) {
+			const root = tree(group({ fill: "#f00" }, group({ ...attributes, stroke: "#00f" }, leaf({}))));
+			flattenPresentationGroups(root);
+			// The pure-paint wrapper is gone, its fill handed to the keeper.
+			expect(root.children).toHaveLength(1);
+			const kept = root.children[0] as XastElement;
+			expect(kept.name).toBe("g");
+			expect(kept.attributes).toEqual({ ...attributes, stroke: "#00f", fill: "#f00" });
+			expect(kept.children).toHaveLength(1);
+		}
+	});
+
+	it("lets a child's own attribute win, and leaves defs and clip paths alone", () => {
+		const clip = element("clipPath", { id: "c" }, group({ fill: "#0f0" }, leaf({})));
+		const root = tree(group({ fill: "#f00", stroke: "#00f" }, leaf({ fill: "none" }), leaf({}), clip));
+		flattenPresentationGroups(root);
+		const [own, inherited, clipPath] = root.children as XastElement[];
+		expect(own.attributes).toEqual({ fill: "none", stroke: "#00f" });
+		expect(inherited.attributes).toEqual({ fill: "#f00", stroke: "#00f" });
+		expect(clipPath.name).toBe("clipPath");
+		expect((clipPath.children[0] as XastElement).name).toBe("g"); // untouched inside
+	});
+
+	it("measures depth without recursion", () => {
+		let node = leaf({});
+		for (let i = 0; i < 20_000; i++) node = group({}, node);
+		expect(maxGroupDepth(tree(node))).toBe(20_000);
+	});
+
+	it("leaves diagrams at or below the threshold to SVGO alone", () => {
+		// Below the threshold nothing is restructured, so every diagram that
+		// rendered before renders byte-for-byte the same.
+		const chain = (depth: number): string => {
+			let svg = "";
+			for (let i = 0; i < depth; i++) svg += `<g fill='#00${i % 10}'><path d='M${i} 0L1 1'/>`;
+			return `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'>${svg}${"</g>".repeat(depth)}</svg>`;
+		};
+		expect(groupDepth(optimizeSVG(chain(FLATTEN_DEPTH_THRESHOLD), "p-"))).toBeGreaterThan(FLATTEN_DEPTH_THRESHOLD / 2);
+		expect(groupDepth(optimizeSVG(chain(FLATTEN_DEPTH_THRESHOLD + 1), "p-"))).toBeLessThanOrEqual(1);
 	});
 });

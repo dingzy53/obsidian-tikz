@@ -9,7 +9,9 @@ import {
 	sanitizeMaxCacheEntries,
 	sanitizeMaxConcurrentCompiles,
 	sanitizeTimeoutSeconds,
+	SETTINGS_VERSION,
 } from "../src/settingsModel";
+import { DEFAULT_PREAMBLE, LEGACY_DEFAULT_PREAMBLE, V1_DEFAULT_PREAMBLE } from "../src/compiler/wrapSource";
 
 describe("mergeSettings", () => {
 	it("fills every field from the defaults when nothing is stored", () => {
@@ -76,6 +78,41 @@ describe("mergeSettings", () => {
 		expect(mergeSettings({ maxCacheEntries: -5 }).maxCacheEntries).toBe(0);
 		expect(mergeSettings({ maxCacheEntries: 12.9 }).maxCacheEntries).toBe(12);
 		expect(mergeSettings({ maxCacheEntries: NaN }).maxCacheEntries).toBe(DEFAULT_SETTINGS.maxCacheEntries);
+	});
+
+	it("raises the cache limit to 2000, which a ~600-diagram vault fits in", () => {
+		expect(DEFAULT_SETTINGS.maxCacheEntries).toBe(2000);
+	});
+
+	it("moves a pre-1.3 saved 500 (the old default) to the new default, once", () => {
+		// `saveData` wrote the old default back as a value, so it is not a choice.
+		expect(mergeSettings({ maxCacheEntries: 500 }).maxCacheEntries).toBe(2000);
+		expect(mergeSettings({ maxCacheEntries: 501 }).maxCacheEntries).toBe(501);
+		// Once migrated, 500 is an ordinary value again.
+		expect(mergeSettings({ maxCacheEntries: 500, settingsVersion: 2 }).maxCacheEntries).toBe(500);
+		expect(mergeSettings({ maxCacheEntries: 500 }).settingsVersion).toBe(SETTINGS_VERSION);
+	});
+
+	it("moves an untouched 1.0–1.2 default preamble to the new one, and keeps edited ones", () => {
+		expect(mergeSettings({ defaultPreamble: V1_DEFAULT_PREAMBLE }).defaultPreamble).toBe(DEFAULT_PREAMBLE);
+		expect(mergeSettings({ defaultPreamble: `  ${V1_DEFAULT_PREAMBLE}\n` }).defaultPreamble).toBe(DEFAULT_PREAMBLE);
+		expect(mergeSettings({ defaultPreamble: LEGACY_DEFAULT_PREAMBLE }).defaultPreamble).toBe(DEFAULT_PREAMBLE);
+		const edited = `${V1_DEFAULT_PREAMBLE}\n\\usepackage{siunitx}`;
+		expect(mergeSettings({ defaultPreamble: edited }).defaultPreamble).toBe(edited);
+		// Pasted back deliberately after the migration: kept.
+		expect(
+			mergeSettings({ defaultPreamble: V1_DEFAULT_PREAMBLE, settingsVersion: SETTINGS_VERSION }).defaultPreamble,
+		).toBe(V1_DEFAULT_PREAMBLE);
+	});
+
+	it("loads heavy packages on demand by default, and repairs an unknown mode", () => {
+		expect(DEFAULT_SETTINGS.heavyPackages).toBe("on-demand");
+		expect(mergeSettings({ heavyPackages: "all" }).heavyPackages).toBe("all");
+		expect(mergeSettings({ heavyPackages: "sometimes" }).heavyPackages).toBe("on-demand");
+	});
+
+	it("keeps 500 when the user chooses it in the settings tab", () => {
+		expect(applySettingChange(DEFAULT_SETTINGS, "maxCacheEntries", 500).maxCacheEntries).toBe(500);
 	});
 
 	it("migrates the pre-1.1 invertColorsInDarkMode toggle", () => {
