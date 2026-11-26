@@ -148,7 +148,57 @@ function maskComments(source: string): string {
 }
 
 const PACKAGE_LOADERS = /^\\(usepackage|RequirePackage)\b/;
+/** Lines that must be in the preamble; all but the package loaders need the default packages first. */
 const PREAMBLE_ONLY = /^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotslibrary)\b/;
+/** Hoisted out of a bare (tier 3) snippet only; a tier 2 head is preamble already. */
+const DECLARATIONS = /^\\DeclareMathOperator\b/;
+
+/** A multi-line preamble command never spans more than this many lines. */
+const MAX_CONTINUATION_LINES = 20;
+
+/**
+ * Net `{`/`[` nesting a line opens, ignoring comments and escaped `\{`. Used
+ * to keep `\usetikzlibrary{arrows.meta,\n positioning}` together: hoisting
+ * only its first line left `positioning}` in the document body.
+ */
+function openGroups(line: string): number {
+	const code = maskComments(line).replace(/\\./g, "");
+	let depth = 0;
+	for (const char of code) {
+		if (char === "{" || char === "[") depth++;
+		else if (char === "}" || char === "]") depth--;
+	}
+	return depth;
+}
+
+/**
+ * Splits the block into commands, so that a preamble command written over
+ * several lines is one entry. A command whose groups never close within
+ * {@link MAX_CONTINUATION_LINES} is left as single lines, exactly as before.
+ */
+function preambleUnits(lines: string[], isPreambleLine: (line: string) => boolean): string[] {
+	const units: string[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (!isPreambleLine(line)) {
+			units.push(line);
+			continue;
+		}
+		let depth = openGroups(line);
+		let end = i;
+		while (depth > 0 && end + 1 < lines.length && end - i < MAX_CONTINUATION_LINES) {
+			end++;
+			depth += openGroups(lines[end]);
+		}
+		if (depth === 0 && end > i) {
+			units.push(lines.slice(i, end + 1).join("\n"));
+			i = end;
+		} else {
+			units.push(line);
+		}
+	}
+	return units;
+}
 
 /**
  * Splits the block's own preamble-level lines into those that must come
@@ -159,15 +209,23 @@ const PREAMBLE_ONLY = /^\\(usepackage|RequirePackage|usetikzlibrary|usepgfplotsl
  * LaTeX aborts with "Option clash for package xcolor" — and dvipsnames is
  * extremely common in TikZ snippets. Conversely `\usetikzlibrary` and
  * `\usepgfplotslibrary` need tikz/pgfplots to be loaded already, so they have
- * to follow the default preamble.
+ * to follow the default preamble. So does `\DeclareMathOperator` from a bare
+ * snippet ("Can be used only in preamble"; it needs amsmath).
+ *
+ * A command written over several lines moves as a whole ({@link preambleUnits}).
  */
-function splitPreambleLines(lines: string[]): { early: string[]; late: string[]; rest: string[] } {
+function splitPreambleLines(
+	lines: string[],
+	hoistDeclarations: boolean,
+): { early: string[]; late: string[]; rest: string[] } {
 	const early: string[] = [];
 	const late: string[] = [];
 	const rest: string[] = [];
-	for (const line of lines) {
+	const isLate = (line: string): boolean =>
+		PREAMBLE_ONLY.test(line) || (hoistDeclarations && DECLARATIONS.test(line));
+	for (const line of preambleUnits(lines, isLate)) {
 		if (PACKAGE_LOADERS.test(line)) early.push(line);
-		else if (PREAMBLE_ONLY.test(line)) late.push(line);
+		else if (isLate(line)) late.push(line);
 		else rest.push(line);
 	}
 	return { early, late, rest };
@@ -196,7 +254,7 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 		const index = match?.index ?? 0;
 		const head = tidiedSource.slice(0, index);
 		const document = tidiedSource.slice(index);
-		const { early, late, rest } = splitPreambleLines(head.split("\n"));
+		const { early, late, rest } = splitPreambleLines(head.split("\n"), false);
 		const tex = withContent([
 			STANDALONE_CLASS,
 			driverLine,
@@ -211,7 +269,7 @@ export function wrapTikzSource(options: WrapOptions): WrappedSource {
 
 	// Tier 3: `\usepackage` and friends are preamble-only, so lift them out of
 	// what will become the document body.
-	const { early, late, rest } = splitPreambleLines(tidiedSource.split("\n"));
+	const { early, late, rest } = splitPreambleLines(tidiedSource.split("\n"), true);
 	const tex = withContent([
 		STANDALONE_CLASS,
 		driverLine,

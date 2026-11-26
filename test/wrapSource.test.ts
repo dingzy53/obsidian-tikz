@@ -98,6 +98,46 @@ describe("wrapTikzSource", () => {
 		expect(tex.indexOf("\\usetikzlibrary{arrows.meta}")).toBeLessThan(tex.indexOf("\\begin{document}"));
 	});
 
+	it("hoists a \\usetikzlibrary written over several lines as a whole", () => {
+		// Hoisting only the first line used to leave `positioning}` in the
+		// document body: "! Missing \\endcsname inserted".
+		const source = "\\usetikzlibrary{arrows.meta,\npositioning}\n\\begin{tikzpicture}\\end{tikzpicture}";
+		const { tex, hoisted } = wrapTikzSource({ ...base, source });
+		expect(hoisted).toEqual(["\\usetikzlibrary{arrows.meta,\npositioning}"]);
+		const body = tex.slice(tex.indexOf("\\begin{document}"));
+		expect(body).not.toContain("positioning");
+		expect(tex.indexOf("\\usepackage{tikz}")).toBeLessThan(tex.indexOf("\\usetikzlibrary{arrows.meta,"));
+	});
+
+	it("keeps package options written over several lines together", () => {
+		const source = "\\usepackage[\nmode=x,\n% a comment with a { brace\nother]{pkg}\n\\draw (0,0);";
+		const { tex, hoisted } = wrapTikzSource({ ...base, source });
+		expect(hoisted).toEqual(["\\usepackage[\nmode=x,\n% a comment with a { brace\nother]{pkg}"]);
+		expect(tex.indexOf("other]{pkg}")).toBeLessThan(tex.indexOf("\\usepackage{tikz}"));
+	});
+
+	it("leaves a preamble line whose braces never close as it was", () => {
+		const source = "\\usetikzlibrary{calc\n\\draw (0,0);";
+		const { hoisted, tex } = wrapTikzSource({ ...base, source });
+		expect(hoisted).toEqual(["\\usetikzlibrary{calc"]);
+		expect(tex.slice(tex.indexOf("\\begin{document}"))).toContain("\\draw (0,0);");
+	});
+
+	it("hoists \\DeclareMathOperator out of a tier-3 body, after amsmath", () => {
+		// In the body it fails with "Can be used only in preamble".
+		const source = "\\DeclareMathOperator{\\tr}{tr}\n\\node {$\\tr A$};";
+		const { tex, hoisted } = wrapTikzSource({ ...base, source });
+		expect(hoisted).toEqual(["\\DeclareMathOperator{\\tr}{tr}"]);
+		expect(tex.indexOf("\\usepackage{amsmath}")).toBeLessThan(tex.indexOf("\\DeclareMathOperator"));
+		expect(tex.indexOf("\\DeclareMathOperator")).toBeLessThan(tex.indexOf("\\begin{document}"));
+	});
+
+	it("tier 2: leaves \\DeclareMathOperator where the block's preamble put it", () => {
+		const source = "\\newcommand{\\R}{\\mathbb{R}}\n\\DeclareMathOperator{\\tr}{tr}\n\\begin{document}\nx\n\\end{document}";
+		const { tex } = wrapTikzSource({ ...base, source });
+		expect(tex.indexOf("\\newcommand{\\R}")).toBeLessThan(tex.indexOf("\\DeclareMathOperator"));
+	});
+
 	it("loads the block's own packages before the default preamble (no xcolor option clash)", () => {
 		const source = "\\usepackage[dvipsnames]{xcolor}\n\\begin{tikzpicture}\\end{tikzpicture}";
 		const { tex } = wrapTikzSource({ ...base, source });

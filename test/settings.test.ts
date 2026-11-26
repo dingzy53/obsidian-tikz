@@ -78,6 +78,23 @@ describe("mergeSettings", () => {
 		expect(mergeSettings({ maxCacheEntries: NaN }).maxCacheEntries).toBe(DEFAULT_SETTINGS.maxCacheEntries);
 	});
 
+	it("raises the cache limit to 2000, which a ~600-diagram vault fits in", () => {
+		expect(DEFAULT_SETTINGS.maxCacheEntries).toBe(2000);
+	});
+
+	it("moves a pre-1.3 saved 500 (the old default) to the new default, once", () => {
+		// `saveData` wrote the old default back as a value, so it is not a choice.
+		expect(mergeSettings({ maxCacheEntries: 500 }).maxCacheEntries).toBe(2000);
+		expect(mergeSettings({ maxCacheEntries: 501 }).maxCacheEntries).toBe(501);
+		// Once migrated, 500 is an ordinary value again.
+		expect(mergeSettings({ maxCacheEntries: 500, settingsVersion: 2 }).maxCacheEntries).toBe(500);
+		expect(mergeSettings({ maxCacheEntries: 500 }).settingsVersion).toBe(2);
+	});
+
+	it("keeps 500 when the user chooses it in the settings tab", () => {
+		expect(applySettingChange(DEFAULT_SETTINGS, "maxCacheEntries", 500).maxCacheEntries).toBe(500);
+	});
+
 	it("migrates the pre-1.1 invertColorsInDarkMode toggle", () => {
 		expect(mergeSettings({ invertColorsInDarkMode: false }).colorAdaptation).toBe("off");
 		expect(mergeSettings({ invertColorsInDarkMode: true }).colorAdaptation).toBe("adaptive");

@@ -14,6 +14,12 @@ export interface SharedCompileError {
 }
 
 export interface TikzSettings {
+	/**
+	 * Schema version of what is stored in `data.json`. One-time migrations of
+	 * *old defaults* key on it, so they run once on data an older version
+	 * saved, never on a value the user has just chosen in the settings tab.
+	 */
+	settingsVersion: number;
 	engine: EngineId;
 	/** Override for the TeX engine; empty = auto-detect (plan §6.4). */
 	enginePath: string;
@@ -52,7 +58,14 @@ export interface TikzSettings {
 	sharedErrors: Record<string, SharedCompileError>;
 }
 
+/**
+ * 1: everything before 1.3 (no `settingsVersion` key).
+ * 2: 1.3, default cache size 500 -> 2000.
+ */
+export const SETTINGS_VERSION = 2;
+
 export const DEFAULT_SETTINGS: TikzSettings = {
+	settingsVersion: SETTINGS_VERSION,
 	engine: DEFAULT_ENGINE,
 	enginePath: "",
 	dvisvgmPath: "",
@@ -62,7 +75,9 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 	compileTimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
 	maxConcurrentCompiles: 0,
 	colorAdaptation: "adaptive",
-	maxCacheEntries: 500,
+	// Above the ~600 diagrams of a large real vault: at 500 such a vault kept
+	// evicting entries it was about to need again.
+	maxCacheEntries: 2000,
 	zoomOnClick: true,
 	shareWithMobile: false,
 	sharedFolder: DEFAULT_SHARED_FOLDER,
@@ -72,6 +87,9 @@ export const DEFAULT_SETTINGS: TikzSettings = {
 const ADAPTATION_MODES: ColorAdaptation[] = ["adaptive", "light-canvas", "off"];
 
 export const MAX_TIMEOUT_SECONDS = 3600;
+
+/** The default before 1.3. `saveData` stores every key, so most users have it saved. */
+const LEGACY_DEFAULT_MAX_CACHE_ENTRIES = 500;
 
 /**
  * A timeout of zero or less would kill every compile instantly, and a huge one
@@ -136,6 +154,14 @@ export function mergeSettings(loaded: unknown): TikzSettings {
 	}
 	merged.compileTimeoutSeconds = sanitizeTimeoutSeconds(merged.compileTimeoutSeconds);
 	merged.maxCacheEntries = sanitizeMaxCacheEntries(merged.maxCacheEntries);
+	const storedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 1;
+	// Pre-1.3 data with exactly the old default: `saveData` wrote it back as a
+	// value, not a choice, so it follows the new default. Once migrated (or
+	// when set in the settings tab) 500 is kept like any other value.
+	if (storedVersion < 2 && raw.maxCacheEntries === LEGACY_DEFAULT_MAX_CACHE_ENTRIES) {
+		merged.maxCacheEntries = DEFAULT_SETTINGS.maxCacheEntries;
+	}
+	merged.settingsVersion = SETTINGS_VERSION;
 	merged.maxConcurrentCompiles = sanitizeMaxConcurrentCompiles(merged.maxConcurrentCompiles);
 	merged.allowShellEscape = merged.allowShellEscape === true;
 	merged.zoomOnClick = typeof merged.zoomOnClick === "boolean" ? merged.zoomOnClick : DEFAULT_SETTINGS.zoomOnClick;

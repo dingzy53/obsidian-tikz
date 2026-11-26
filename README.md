@@ -75,6 +75,19 @@ Bare TikZ snippets and packages loaded inline are also accepted:
 ```
 ````
 
+`\usepackage`, `\usetikzlibrary` and `\DeclareMathOperator` lines in a bare snippet are moved into the preamble, including ones written over several lines.
+
+### One diagram per block
+
+A block shows exactly one page. A document that produces several, such as two `tikzpicture`s under `\documentclass[tikz]{standalone}`, fails with an error saying so. `dvisvgm` would otherwise show page 1 and silently drop the rest. Put each picture in its own block, or combine them in one `tikzpicture` (for example with `shift` on a `scope`).
+
+### When a diagram fails
+
+The error block shows TeX's (or `dvisvgm`'s) first error line, the full compiler log and the generated LaTeX. For the common mistakes it adds a hint naming the fix:
+- `\lt` / `\gt` copied from note math (MathJax only; write `<` / `>`);
+- a TikZ key or arrow tip whose library is not loaded (`right=of`, `diamond`, `fit`, `Stealth`, …), with the `\usetikzlibrary` to add;
+- `\color` inside `font=`, which `dvisvgm` cannot nest.
+
 ### Zooming
 
 Click a diagram, or select it with Tab and press Enter, to open it in a viewer. It opens fitted to the window, and you can:
@@ -91,7 +104,7 @@ The viewer uses the already rendered SVG, so nothing is recompiled. Turn it off 
 Phones and tablets cannot run TeX, so on mobile the plugin only **displays** diagrams that a desktop rendered and shared. Sharing is **off by default**, because it adds visible files to your vault.
 
 1. On a desktop, turn on **Settings → Native TikZ → Mobile → Share diagrams with mobile**. The plugin creates the shared folder (`TikZ cache` by default) and fills it with one `<hash>.svg` per diagram in your notes, copying renders it already has.
-2. Use **Render all for mobile** to compile the diagrams you have never opened on that desktop. New and edited diagrams are added as they render, and **Update shared diagrams now** (also run once at startup) removes files no note uses any more. Only files named `<64 hex>.svg` are ever deleted, so anything else you keep in the folder is safe.
+2. Use **Render all for mobile** to compile the diagrams you have never opened on that desktop (as many at once as **Parallel compiles** allows). New and edited diagrams are added as they render, and **Update shared diagrams now** (also run once at startup) removes files no note uses any more. Only files named `<64 hex>.svg` are ever deleted, so anything else you keep in the folder is safe.
 3. Let your sync service carry the folder to your phone, then install and enable the plugin there. Diagrams show up as soon as they sync, and anything not shared yet shows **"TikZ diagram not rendered yet"**. Clicking a diagram opens the zoomable viewer, with pinch to zoom.
 
 - **Obsidian Sync**: keep **Images** in selective sync (the default; `.svg` counts as an image). Turn on **Installed community plugin list** to sync the plugin itself and its settings, so the phone uses the same shared folder.
@@ -102,7 +115,7 @@ Phones and tablets cannot run TeX, so on mobile the plugin only **displays** dia
 
 ### Cache & Scratch Files
 
-- **Render cache**: Compiled diagrams (`<hash>.svg`) are saved in `<vault>/.obsidian/plugins/tikz/cache/` (hidden inside the plugin directory; zero vault pollution). Failed compiles are not cached; the error block shows the live compiler log. When the entry limit is reached, the least recently *used* diagrams are dropped first.
+- **Render cache**: Compiled diagrams (`<hash>.svg`) are saved in `<vault>/.obsidian/plugins/tikz/cache/` (hidden inside the plugin directory; zero vault pollution). Failed compiles are not cached; the error block shows the live compiler log. Very deeply nested output (pgfplots `surf` nests a group per facet, thousands deep, which took seconds to process on every display) is flattened when displayed, without changing how it looks. When the entry limit is reached, the least recently *used* diagrams are dropped first.
 - **Compile scratch files**: Temporary TeX build files (`.tex`, `.dvi`, `.log`) live in your OS temp folder (`os.tmpdir()/obsidian-tikz/`, or `~/.cache/obsidian-tikz/` on Flatpak) and are cleaned up immediately upon completion.
 
 ## Showcase
@@ -138,24 +151,24 @@ A diagram shared from desktop, shown on a phone: in the note, in the viewer, and
 | **Allow shell escape** | Enables `-shell-escape` (danger: executes arbitrary system commands). | `false` |
 | **Compile timeout** | Maximum seconds per compilation stage (1–3600) before killing the process tree. Time spent queued does not count. | `20` |
 | **Parallel compiles** | How many diagrams compile at once; the rest queue. `0` = automatic (half the CPU cores, 1–4). | `0` |
-| **Maximum cache** | Maximum cached SVGs (0 = unlimited). | `500` |
+| **Maximum cache** | Maximum cached SVGs (0 = unlimited). A saved `500` (the default before 1.3) moves to the new default once. | `2000` |
 
 > [!NOTE]
 > On macOS, GUI apps launched from Finder or the Dock do not inherit your shell's `PATH`. If binaries show as "not found", click **Detect automatically** or set the path manually (e.g. `/Library/TeX/texbin`).
 
 ## Dark mode
 
-- **Adaptive** (default): Automatically mirrors color lightness while maintaining a 3:1 contrast floor, ensuring labels and shapes remain legible against dark themes.
+- **Adaptive** (default): Ink (anything legible on white) mirrors its lightness and keeps a 3:1 contrast floor, so labels and curves stay legible against dark themes. Light tints are treated as what they are, a color mixed into white (`blue!12` is 12% blue): they are rebuilt with the same color mixed into the dark page instead. White becomes the page color, and pastel panels become faint tints just above it, never darker than the page.
 - **Light canvas**: Keeps original colors untouched and shows the diagram on a light panel (ideal for complex shading, `ball color`, or colormaps).
 - **Off**: Leaves colors unchanged.
 
 The theme comes from Obsidian, unless a container outside the note overrides it. The nearest `data-tikz-theme="light"` or `"dark"` ancestor wins, then the nearest `.theme-light` or `.theme-dark` ancestor. This is for other plugins and outer containers, for example printing diagrams in light colors while Obsidian is dark. Wrapping a ` ```tikz ` block in `<div data-tikz-theme="light">…</div>` in Markdown does not work: Obsidian renders the HTML `<div>` and the code block as siblings rather than nesting them.
 
-In **Adaptive** mode, explicit white fills (such as `fill=white` on a background rectangle or legend box) also mirror to black in dark mode so light ink on top stays readable. To keep diagrams on a white background with untouched colors in dark mode, switch **Dark mode colors** to **Light canvas**.
+In **Adaptive** mode, explicit white fills (such as `fill=white` on a label mask, a legend box or a Venn cutout) become the dark page color (`#1e1e1e`, Obsidian's default dark background), so masks blend into the page instead of showing as black boxes. Light ink drawn on top stays readable. The adaptation assumes that default background: on a theme with a very different dark background, white masks show as slightly different boxes. To keep diagrams on a white background with untouched colors in dark mode, switch **Dark mode colors** to **Light canvas**.
 
 ## Settings explained
 
-- **Dark mode colors**: Diagrams are authored for light paper. Adaptive preserves hues while inverting lightness at display time; Light canvas leaves every diagram color intact on a light background. Changing this never recompiles diagrams.
+- **Dark mode colors**: Diagrams are authored for light paper. Adaptive preserves hues while inverting lightness (and re-tinting light fills onto the dark page) at display time; Light canvas leaves every diagram color intact on a light background. Changing this never recompiles diagrams.
 - **TeX engine**: `dvilualatex` matches standard LaTeX across tested math and TikZ blocks and supports `fontspec` system fonts.
 - **TeX binaries & Environment**: GUI launches on macOS do not inherit shell `PATH`; use **Detect** or add directories (such as `/Library/TeX/texbin`) to **Extra PATH directories**. Under Linux Flatpak, host TeX tools run automatically through `flatpak-spawn --host`.
 - **Default preamble**: Loaded before blocks that omit `\documentclass`, including `\pgfplotsset{compat=1.18}`. Inline `\usepackage{...}` works regardless.

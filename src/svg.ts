@@ -181,9 +181,12 @@ function liftToLuminance(colour: Rgb, targetLuminance: number): Rgb {
 	};
 }
 
+/** The typical dark theme background (`#1e1e1e`), where white ends up. */
+const DARK_PAGE: Rgb = { r: 30, g: 30, b: 30 };
+
 /**
- * The dark-page colour for one source colour: mirror the lightness, then make
- * sure the result is actually visible.
+ * Ink on a dark page: mirror the lightness, then make sure the result is
+ * actually visible.
  *
  * Mirroring alone is not enough, and this is measured rather than theoretical.
  * HSL lightness is not perceived brightness, so a saturated colour can mirror
@@ -191,19 +194,13 @@ function liftToLuminance(colour: Rgb, targetLuminance: number): Rgb {
  * 5.55:1 against a white page, but its mirror `#0000b3` is only 1.31:1 against
  * `#1e1e1e` — mirroring would have made a perfectly legible curve nearly
  * invisible. So anything that was legible on the light page is lifted until it
- * clears {@link MIN_CONTRAST} on the dark one.
- *
- * The floor deliberately does **not** apply to colours that were already below
- * it: those are backgrounds and deliberately subtle strokes. A `#f0f0f0` box is
- * 1.14:1 against white, and forcing it to 3:1 would turn a barely-there panel
- * into a grey slab. Its mirror is 1.15:1 against `#1e1e1e` — the same design,
- * correctly translated.
+ * clears {@link MIN_CONTRAST} on the dark one. Colours below that on white
+ * (pure green and yellow, say) keep the mirror, which for them is bright.
  */
-export function adaptForDarkPage(colour: Rgb): Rgb {
+function adaptInk(colour: Rgb): Rgb {
 	const original = relativeLuminance(colour);
 	const mirrored = mirrorLightness(colour);
 
-	// Meant to be subtle on the light page: keep it subtle on the dark one.
 	if (contrastRatio(original, LIGHT_PAGE_LUMINANCE) < MIN_CONTRAST) return mirrored;
 
 	if (contrastRatio(relativeLuminance(mirrored), DARK_PAGE_LUMINANCE) >= MIN_CONTRAST) {
@@ -212,6 +209,54 @@ export function adaptForDarkPage(colour: Rgb): Rgb {
 
 	const target = MIN_CONTRAST * (DARK_PAGE_LUMINANCE + 0.05) - 0.05;
 	return liftToLuminance(mirrored, target);
+}
+
+/**
+ * The dark-page colour for one source colour.
+ *
+ * Colours that were legible on the light page are ink: {@link adaptInk}.
+ *
+ * The rest (below {@link MIN_CONTRAST} on white) are backgrounds, masks,
+ * highlights and deliberately subtle strokes, and nearly all of them are tints
+ * of white: xcolor's `blue!12` is literally 12% blue mixed into white. So each
+ * is split into the ink it carries and the white it is diluted with —
+ * `colour = α·ink + (1 − α)·white`, taking as much white as the colour holds —
+ * and rebuilt over the dark page instead: `α·adaptInk(ink) + (1 − α)·page`.
+ * This is how a translucent fill behaves, and it is what a tint means:
+ *
+ *   - white (α = 0) lands exactly on the page, so a `fill=white` label mask or
+ *     Venn cutout disappears into it instead of showing as a black sticker;
+ *   - `blue!12` becomes a faint blue card just *above* the page, and
+ *     `#f0f0f0` a barely lighter panel — a 1.14:1 panel on white must not turn
+ *     into a grey slab, and must not read as a hole either;
+ *   - colours with no white in them (pure green, yellow, cyan: α = 1) are
+ *     plain ink and come out exactly as before.
+ *
+ * The plain mirror this replaces for tints sent white to black and every
+ * pastel below the page colour (38 of the dark-mode defects in a 593-diagram
+ * vault audit). Two simpler fixes were tried and rejected: mirroring onto
+ * `[page, 1]` in HSL kept full saturation and made pale yellow `#ffffc0` a
+ * 3.4:1 olive slab, and lifting the mirror to its original contrast turned
+ * ghost-white `#f8f8ff` into navy `#000084`.
+ */
+export function adaptForDarkPage(colour: Rgb): Rgb {
+	if (contrastRatio(relativeLuminance(colour), LIGHT_PAGE_LUMINANCE) >= MIN_CONTRAST) {
+		return adaptInk(colour);
+	}
+
+	const white = Math.min(colour.r, colour.g, colour.b) / 255;
+	const alpha = 1 - white;
+	if (alpha < 1e-6) return { ...DARK_PAGE };
+	const ink = adaptInk({
+		r: ((colour.r / 255 - white) / alpha) * 255,
+		g: ((colour.g / 255 - white) / alpha) * 255,
+		b: ((colour.b / 255 - white) / alpha) * 255,
+	});
+	return {
+		r: alpha * ink.r + (1 - alpha) * DARK_PAGE.r,
+		g: alpha * ink.g + (1 - alpha) * DARK_PAGE.g,
+		b: alpha * ink.b + (1 - alpha) * DARK_PAGE.b,
+	};
 }
 
 /**
@@ -416,6 +461,121 @@ function dropChild(node: XastChild, parent: XastParent): void {
 	parent.children = parent.children.filter((child) => child !== node);
 }
 
+// ---------------------------------------------------------------------------
+// Flattening runaway group nesting
+// ---------------------------------------------------------------------------
+
+/**
+ * Presentation attributes of *inherited* properties. A `<g>` carrying only
+ * these means exactly the same as handing each of them to its children that
+ * do not set their own, so such a group can be dissolved without changing a
+ * pixel.
+ *
+ * Deliberately absent: `opacity`, `clip-path`, `mask` and `filter` apply to
+ * the group composited as a whole (two overlapping children under
+ * `opacity=0.5` do not show through each other), and `transform`, `id`,
+ * `class` and `style` change geometry, references or the cascade.
+ */
+const INHERITED_PRESENTATION = new Set([
+	"fill", "fill-opacity", "fill-rule",
+	"stroke", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin",
+	"stroke-miterlimit", "stroke-dasharray", "stroke-dashoffset",
+]);
+
+/**
+ * Nesting at or below which an SVG is left exactly as dvisvgm wrote it.
+ * Ordinary diagrams stay well under it (the deepest of 593 diagrams in a real
+ * vault that did not use `surf` was 18), so only runaway output is ever
+ * restructured.
+ */
+export const FLATTEN_DEPTH_THRESHOLD = 32;
+
+function isFlattenableGroup(node: XastChild): boolean {
+	return (
+		node.type === "element" &&
+		node.name === "g" &&
+		Object.keys(node.attributes).every((name) => INHERITED_PRESENTATION.has(name))
+	);
+}
+
+/** Deepest `<g>`-in-`<g>` nesting, measured without recursion. */
+export function maxGroupDepth(root: XastParent): number {
+	let max = 0;
+	const stack: [XastParent, number][] = [[root, 0]];
+	while (stack.length > 0) {
+		const [node, depth] = stack.pop() as [XastParent, number];
+		for (const child of node.children) {
+			if (child.type !== "element") continue;
+			const childDepth = child.name === "g" ? depth + 1 : depth;
+			if (childDepth > max) max = childDepth;
+			stack.push([child, childDepth]);
+		}
+	}
+	return max;
+}
+
+/**
+ * Dissolves every pure-presentation `<g>` (see {@link INHERITED_PRESENTATION})
+ * below the document or a rendered container, handing its attributes to its
+ * children unless they set their own. Iterative, so a nesting depth in the
+ * thousands is no problem.
+ *
+ * Why this exists: pgfplots `surf` through `pgfsys-dvisvgm.def` opens three or
+ * four colour/opacity groups per facet and closes none of them until the plot
+ * ends, so a 30-sample surface nests 3,377 groups deep. SVGO's
+ * `collapseGroups` cannot help (each group holds a facet *and* the next
+ * group), and its recursive passes took 5.8 s of main-thread time on that
+ * file, on every render and theme switch, still leaving it 837 deep in the
+ * DOM. Flattened, the same file takes about 1 s and is 3 levels deep.
+ *
+ * Paint order is preserved: children are spliced in place of their group.
+ * Contents of `<defs>`, `<clipPath>`, `<mask>`, `<pattern>`, `<marker>` and
+ * `<symbol>` are not touched.
+ */
+export function flattenPresentationGroups(root: XastParent): void {
+	const containers: XastParent[] = [root];
+	while (containers.length > 0) {
+		const parent = containers.pop() as XastParent;
+		const flat: XastChild[] = [];
+		// Reversed, so `pop()` yields children in document order.
+		const pending = [...parent.children].reverse();
+		while (pending.length > 0) {
+			const node = pending.pop() as XastChild;
+			if (node.type === "element" && isFlattenableGroup(node)) {
+				const inherited = Object.entries(node.attributes);
+				for (let i = node.children.length - 1; i >= 0; i--) {
+					const child = node.children[i];
+					if (child.type === "element") {
+						for (const [name, value] of inherited) {
+							if (!(name in child.attributes)) child.attributes[name] = value;
+						}
+					}
+					pending.push(child);
+				}
+				continue;
+			}
+			flat.push(node);
+			if (node.type === "element" && (node.name === "g" || node.name === "svg")) {
+				containers.push(node);
+			}
+		}
+		parent.children = flat;
+	}
+}
+
+/**
+ * Runs first, on the tree SVGO's (non-recursive) parser built, so none of the
+ * recursive passes after it ever see the runaway depth. A no-op below
+ * {@link FLATTEN_DEPTH_THRESHOLD}. Returns no visitor: the work is done here.
+ */
+const flattenDeepGroupsPlugin: CustomPlugin = {
+	name: "tikzFlattenDeepGroups",
+	fn: (root) => {
+		if (maxGroupDepth(root) > FLATTEN_DEPTH_THRESHOLD) flattenPresentationGroups(root);
+		return null;
+	},
+};
+
 /** Thrown when the generated SVG cannot be parsed and so cannot be vetted. */
 export class SvgRejectedError extends Error {
 	constructor(cause: unknown) {
@@ -445,6 +605,7 @@ export function optimizeSVG(svg: string, prefix: string): string {
 	try {
 		const result = optimize(prefixed, {
 			plugins: [
+				flattenDeepGroupsPlugin,
 				sanitizeTreePlugin,
 				{
 					name: "preset-default",

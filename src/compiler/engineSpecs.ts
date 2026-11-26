@@ -67,6 +67,8 @@ export const ENGINE_SPECS: Record<EngineId, EngineSpec> = {
 export type CompileFailureKind =
 	| "binary-not-found"
 	| "compile-error"
+	/** TeX produced more than one page; only the first could be shown. */
+	| "multi-page"
 	| "timeout"
 	| "dvisvgm-error"
 	| "io-error"
