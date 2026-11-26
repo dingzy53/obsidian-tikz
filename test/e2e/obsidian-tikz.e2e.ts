@@ -100,6 +100,56 @@ describe('Native TikZ E2E', function () {
 		expect(result.pagesError).toContain('2 pages');
 	});
 
+	it('renders all diagrams for mobile in parallel, and keeps settings across a plugin reload (desktop with TeX)', async function () {
+		this.timeout(180000);
+		const isDesktop = await browser.executeObsidian(({ obsidian }) => obsidian.Platform.isDesktop);
+		if (!isDesktop) this.skip();
+
+		const result = await browser.executeObsidian(async ({ app }) => {
+			interface TikzPlugin {
+				settings: Record<string, unknown>;
+				saveSettings(): Promise<void>;
+				sharedSync?: { renderAllMissing(): Promise<{ rendered: number; failed: number; cancelled: boolean }> };
+				shared: { list(): { name: string }[] };
+			}
+			const plugins = (app as unknown as {
+				plugins: { plugins: Record<string, TikzPlugin>; disablePlugin(id: string): Promise<void>; enablePlugin(id: string): Promise<boolean> };
+			}).plugins;
+			const plugin = plugins.plugins['tikz'];
+			// This runs on a throwaway copy of test-vault.
+			plugin.settings = {
+				...plugin.settings,
+				shareWithMobile: true,
+				heavyPackages: 'all',
+				maxConcurrentCompiles: 3,
+				maxCacheEntries: 500,
+			};
+			await plugin.saveSettings();
+			const report = await plugin.sharedSync?.renderAllMissing();
+			const shared = plugin.shared.list().map((file) => file.name);
+
+			// A disable/enable cycle reads data.json back from disk, as a restart does.
+			await plugins.disablePlugin('tikz');
+			await plugins.enablePlugin('tikz');
+			const reloaded = plugins.plugins['tikz'];
+			const after = { ...reloaded.settings };
+			reloaded.settings = { ...reloaded.settings, shareWithMobile: false };
+			await reloaded.saveSettings();
+			return { report, shared, after };
+		});
+
+		// Diagram.md and the surface render; the two-page block fails.
+		if (result.report && result.report.rendered === 0) this.skip(); // no TeX here (CI)
+		expect(result.report).toEqual({ rendered: 2, failed: 1, cancelled: false });
+		expect(result.shared).toHaveLength(2);
+		for (const name of result.shared) expect(name).toMatch(/^[0-9a-f]{64}\.svg$/);
+		expect(result.after.shareWithMobile).toBe(true);
+		expect(result.after.heavyPackages).toBe('all');
+		expect(result.after.maxConcurrentCompiles).toBe(3);
+		// Saved at the current settings version: 500 is a choice now, not the old default.
+		expect(result.after.maxCacheEntries).toBe(500);
+	});
+
 	it('registers its settings tab', async function () {
 		const hasTab = await browser.executeObsidian(({ app }) => {
 			const setting = (app as unknown as { setting?: { pluginTabs?: { id: string }[] } }).setting;
